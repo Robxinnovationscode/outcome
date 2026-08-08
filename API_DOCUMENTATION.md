@@ -1,0 +1,115 @@
+# Voice-Enabled Transaction Agent API Documentation
+
+## Base URL
+Local: `http://localhost:3000/api/voice`
+Hosted: `https://<YOUR_HOSTED_DOMAIN>/api/voice`
+
+---
+
+## 1. Process Text Utterance
+**Endpoint:** `POST /api/voice/process-text`
+
+Processes natural language transaction strings (English, Hindi, Hinglish, Tamil accents). Supports multi-turn conversational session states.
+
+### Request Body
+```json
+{
+  "text": "Spent 500 rupees on groceries today",
+  "model": "A", // "A" for JSON only, "B" for direct Firestore write
+  "userId": "user_123",
+  "sessionId": "sess_optional_123"
+}
+```
+
+### Response (Section 3.2 Specification Schema)
+```json
+{
+  "sessionId": "sess_1723120000000_abc123",
+  "requires_clarification": false,
+  "raw_transcript": "Spent 500 rupees on groceries today",
+  "transaction_type": "expense",
+  "amount": 500.00,
+  "currency": "INR",
+  "category": "Groceries",
+  "date": "2026-08-08",
+  "notes": "Spent 500 rupees on groceries today",
+  "confidence": 0.95,
+  "missing_fields": [],
+  "model_used": "A",
+  "confirmation_spoken": "Got it! Recorded EXPENSE of ₹500 for Groceries on 2026-08-08."
+}
+```
+
+### Conversational Fallback Response (When info is missing)
+```json
+{
+  "sessionId": "sess_1723120000000_xyz789",
+  "requires_clarification": true,
+  "missing_fields": ["amount", "category"],
+  "raw_transcript": "Add an expense",
+  "follow_up_question": "Sure! How much was the transaction, and what category was it for?",
+  "confirmation_spoken": "Sure! How much was the transaction, and what category was it for?"
+}
+```
+
+---
+
+## 2. Process Audio Upload
+**Endpoint:** `POST /api/voice/process-audio`
+
+Accepts multipart form data audio file or base64 audio stream. Performs Speech-to-Text (STT) followed by NLU entity extraction.
+
+### Request (Multipart Form Data)
+* `audio`: File upload (`.wav`, `.mp3`, `.m4a`, `.webm`)
+* `model`: `"A"` or `"B"`
+* `userId`: `"user_123"`
+
+### Request (Base64 JSON)
+```json
+{
+  "audioBase64": "data:audio/wav;base64,UklGRi...",
+  "model": "A",
+  "userId": "user_123"
+}
+```
+
+---
+
+## 3. Parse Utterance Only (Model A)
+**Endpoint:** `POST /api/voice/parse`
+
+Parse text utterance without session state or DB side-effects.
+
+```json
+{
+  "text": "Add 25000 salary credited to bank account"
+}
+```
+
+---
+
+## 4. 2-Step Confirmation & Commit (Section 4.4)
+**Endpoint:** `POST /api/voice/confirm-commit`
+
+Commit a previously confirmed transaction to Firestore.
+
+```json
+{
+  "parsedData": {
+    "transaction_type": "income",
+    "amount": 25000,
+    "currency": "INR",
+    "category": "Salary",
+    "date": "2026-08-08"
+  },
+  "userId": "user_123",
+  "operation": "create"
+}
+```
+
+---
+
+## 5. Health Check
+**Endpoint:** `GET /api/voice/health`
+
+Returns API health status, active STT engine, and model capabilities.

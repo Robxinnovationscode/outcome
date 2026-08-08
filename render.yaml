@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: ligthson-voice-agent-api
+    env: node
+    buildCommand: npm install
+    startCommand: node src/server.js
+    envVars:
+      - key: PORT
+        value: 3000

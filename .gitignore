@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Environment & Credentials
+.env
+*.pem
+google-services.json
+service-account*.json
+
+# Logs & Temp
+*.log
+npm-debug.log*
+uploads/
+tmp/
+.vercel/
+.idea/
+.vscode/
+.DS_Store

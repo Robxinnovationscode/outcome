@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LigthsON - Voice Agent API Sandbox & Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo-area">
+        <span class="icon">💡</span>
+        <div>
+          <h1>LigthsON Voice Agent API</h1>
+          <p class="subtitle">Voice-Enabled Transaction Agent Endpoint & Interactive Sandbox</p>
+        </div>
+      </div>
+      <div class="status-badge" id="api-status">
+        <span class="dot"></span> API Online
+      </div>
+    </header>
+
+    <!-- Main Grid -->
+    <div class="dashboard-grid">
+      <!-- Left Panel: Interactive Voice & Text Input -->
+      <section class="card input-card">
+        <h2>🎙️ Voice & Text Transaction Tester</h2>
+        <p class="card-desc">Speak naturally or type a financial transaction sentence to test STT, NLU entity extraction, and Firestore CRUD payload generation.</p>
+
+        <!-- Mode Selector -->
+        <div class="toggle-group">
+          <label>Integration Model:</label>
+          <div class="radio-buttons">
+            <label class="radio-label">
+              <input type="radio" name="integrationModel" value="A" checked> Model A (JSON Schema Only)
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="integrationModel" value="B"> Model B (Direct Firestore CRUD)
+            </label>
+          </div>
+        </div>
+
+        <!-- Voice Microphone Section -->
+        <div class="mic-container">
+          <button id="mic-btn" class="mic-btn">
+            <span class="mic-icon">🎙️</span>
+            <span id="mic-text">Click Mic to Speak</span>
+          </button>
+          <div id="recording-indicator" class="recording-indicator hidden">
+            <span class="pulse"></span> Recording Audio... Speak Now
+          </div>
+        </div>
+
+        <div class="divider"><span>OR TYPE UTTERANCE</span></div>
+
+        <!-- Text Utterance Input -->
+        <form id="text-form">
+          <div class="form-group">
+            <label for="utterance-input">Natural Language Voice Utterance:</label>
+            <input type="text" id="utterance-input" placeholder="e.g. Spent 500 rupees on groceries today" required>
+          </div>
+
+          <div class="quick-samples">
+            <span class="sample-label">Quick Examples:</span>
+            <button type="button" class="chip-btn" data-sample="Spent 500 rupees on groceries today">🛒 ₹500 Groceries</button>
+            <button type="button" class="chip-btn" data-sample="Add 25,000 salary credited to bank">💰 ₹25k Salary</button>
+            <button type="button" class="chip-btn" data-sample="Invested 5000 in Mutual Fund SIP">📈 ₹5k SIP</button>
+            <button type="button" class="chip-btn" data-sample="Add an expense">❓ Clarification Test</button>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="submit-btn">
+              ⚡ Process Utterance
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Right Panel: Structured Output & JSON Viewer -->
+      <section class="card output-card">
+        <div class="card-header">
+          <h2>📊 Extracted API Response</h2>
+          <span class="badge" id="confidence-badge">Confidence: --</span>
+        </div>
+
+        <!-- Spoken Confirmation Box -->
+        <div class="confirmation-box" id="confirmation-box">
+          <span class="speaker-icon">🔊</span>
+          <span id="confirmation-text">Result will appear here after processing...</span>
+        </div>
+
+        <!-- Clarification Banner -->
+        <div id="clarification-banner" class="banner warning-banner hidden">
+          <span class="banner-icon">⚠️</span>
+          <div>
+            <strong>Conversational Clarification Needed:</strong>
+            <p id="clarification-msg"></p>
+          </div>
+        </div>
+
+        <!-- Parsed Fields Grid -->
+        <div class="fields-grid">
+          <div class="field-item">
+            <span class="field-label">Transaction Type</span>
+            <span class="field-value" id="res-type">--</span>
+          </div>
+          <div class="field-item">
+            <span class="field-label">Amount</span>
+            <span class="field-value" id="res-amount">--</span>
+          </div>
+          <div class="field-item">
+            <span class="field-label">Category</span>
+            <span class="field-value" id="res-category">--</span>
+          </div>
+          <div class="field-item">
+            <span class="field-label">Date</span>
+            <span class="field-value" id="res-date">--</span>
+          </div>
+        </div>
+
+        <!-- Raw JSON Schema Accordion -->
+        <div class="json-section">
+          <h3>RAW JSON API SCHEMA (Section 3.2 Specification)</h3>
+          <pre><code id="json-output">// JSON output will be rendered here</code></pre>
+        </div>
+      </section>
+    </div>
+
+    <!-- Bottom Section: API Endpoints & Hosted Link Integration Guide -->
+    <section class="card integration-card">
+      <h2>🔌 Integration Code Guide (How to connect React Native / Backend to this hosted API)</h2>
+      <p>Use the endpoints below to connect your mobile application or backend to this hosted Voice Agent service:</p>
+
+      <div class="endpoints-list">
+        <div class="endpoint-row">
+          <span class="method post">POST</span>
+          <code>/api/voice/process-text</code>
+          <span class="desc">Process natural language text utterance or multi-turn conversational session</span>
+        </div>
+        <div class="endpoint-row">
+          <span class="method post">POST</span>
+          <code>/api/voice/process-audio</code>
+          <span class="desc">Upload recorded audio file (.wav/.m4a/.mp3) or base64 audio stream for STT + NLU</span>
+        </div>
+        <div class="endpoint-row">
+          <span class="method post">POST</span>
+          <code>/api/voice/parse</code>
+          <span class="desc">Model A Parse-Only endpoint (returns JSON schema without DB write)</span>
+        </div>
+      </div>
+
+      <div class="code-snippet-box">
+        <h4>cURL Example:</h4>
+        <pre><code>curl -X POST https://your-hosted-domain.com/api/voice/process-text \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Spent 500 rupees on groceries today", "model": "A"}'</code></pre>
+      </div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
