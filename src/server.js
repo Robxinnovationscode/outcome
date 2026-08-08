@@ -15,27 +15,34 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Initialize Firebase Admin (if credentials available)
-initializeFirebase();
+try {
+  initializeFirebase();
+} catch (e) {
+  console.warn('Firebase init skipped:', e.message);
+}
 
 // Global Middlewares
 app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] }));
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
-// Serve Public Static Files (Interactive Web Sandbox & Docs)
-app.use(express.static(path.join(__dirname, '../public')));
+// Serve Public Static Files safely
+try {
+  app.use(express.static(path.join(__dirname, '../public')));
+} catch (e) {
+  // Ignored in serverless environment
+}
 
 // Mount API Routes
 app.use('/api/voice', voiceRoutes);
 app.use('/api', voiceRoutes); // Backup mount for convenience
 
-// Root Health / Info endpoint fallback if static index is requested as API
+// Root Health / Info endpoint fallback
 app.get('/api-info', (req, res) => {
   res.json({
     service: 'LigthsON Voice-Enabled Transaction Agent API',
     status: 'online',
     version: '1.0.0',
-    documentation: '/API_DOCUMENTATION.md',
     endpoints: {
       health: 'GET /api/voice/health',
       categories: 'GET /api/voice/categories',
@@ -48,16 +55,23 @@ app.get('/api-info', (req, res) => {
   });
 });
 
-// Start Server
-app.listen(PORT, () => {
-  console.log(`
+// Root route handler fallback for serverless
+app.get('/health', (req, res) => {
+  res.json({ status: 'online', timestamp: new Date().toISOString() });
+});
+
+// Only start standalone HTTP server if NOT running on Vercel
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`
 ========================================================================
 🚀 Voice-Enabled Transaction Agent API Server is RUNNING!
 📡 Listening on: http://localhost:${PORT}
-🌐 Interactive Sandbox & Tester: http://localhost:${PORT}
+🌐 Interactive Sandbox: http://localhost:${PORT}
 📄 Health Check Endpoint: http://localhost:${PORT}/api/voice/health
 ========================================================================
-  `);
-});
+    `);
+  });
+}
 
 export default app;
