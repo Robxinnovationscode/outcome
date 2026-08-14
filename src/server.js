@@ -60,6 +60,15 @@ app.get('/health', (req, res) => {
   res.json({ status: 'online', timestamp: new Date().toISOString() });
 });
 
+// Global Express Error Handler for Serverless Safety
+app.use((err, req, res, next) => {
+  console.error('❌ Serverless Uncaught Error:', err);
+  res.status(500).json({
+    error: 'Internal Server Error',
+    message: err.message || 'An unexpected error occurred during function invocation'
+  });
+});
+
 // Only start standalone HTTP server if NOT running on Vercel
 if (!process.env.VERCEL) {
   app.listen(PORT, () => {
