@@ -19,6 +19,9 @@ It enables users to speak natural language financial transactions (e.g. *"Spent 
 * **Conversational Fallback & Follow-ups:** Maintains short session state (`sessionId`) and asks clarifying questions when mandatory fields (`amount`, `category`) are missing or low-confidence.
 * **Interactive Web Sandbox:** Features a built-in browser UI at `http://localhost:3000` to visually test microphone recording, text parsing, and API responses.
 
+* **RAG Summarization:** Ingest transaction text into a vector store and run retrieval-augmented summaries across history (`/api/voice/rag/*`).
+* **Agent Orchestration:** Orchestrated STT → NLU → LLM flows for multi-turn conversation and automated commits (`/api/voice/agent/*`).
+
 ---
 
 ## 🚀 Quick Start (Local Hosting)

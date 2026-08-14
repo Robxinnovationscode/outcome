@@ -8,6 +8,9 @@ package-lock.json
 google-services.json
 service-account*.json
 
+# Local secrets folder (do NOT commit)
+secrets/
+
 # Logs & Temp
 *.log
 npm-debug.log*

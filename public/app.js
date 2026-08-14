@@ -26,6 +26,9 @@ document.addEventListener('DOMContentLoaded', () => {
     .then(res => res.json())
     .then(data => {
       console.log('API Status:', data);
+      if (data.llm_enabled) console.log('LLM support detected.');
+      // Note: `/api/voice/token` requires a Firebase ID token in Authorization header.
+      console.log('Note: /api/voice/token requires Firebase ID token in Authorization header for production.');
     })
     .catch(err => console.error('Health check failed:', err));
 

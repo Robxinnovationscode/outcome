@@ -150,13 +150,24 @@
           <code>/api/voice/parse</code>
           <span class="desc">Model A Parse-Only endpoint (returns JSON schema without DB write)</span>
         </div>
+        <div class="endpoint-row">
+          <span class="method post">POST</span>
+          <code>/api/voice/token</code>
+          <span class="desc">Issue temporary LiveKit participant token (requires Firebase ID token in Authorization header)</span>
+        </div>
       </div>
 
       <div class="code-snippet-box">
-        <h4>cURL Example:</h4>
-        <pre><code>curl -X POST https://your-hosted-domain.com/api/voice/process-text \
-  -H "Content-Type: application/json" \
-  -d '{"text": "Spent 500 rupees on groceries today", "model": "A"}'</code></pre>
+        <h4>cURL Examples:</h4>
+        <pre><code>curl -X POST https://api.robxinnovations.in/api/voice/process-text \
+      -H "Content-Type: application/json" \
+      -d '{"text": "Spent 500 rupees on groceries today", "model": "A"}'</code></pre>
+
+        <!-- Example: Requesting a LiveKit token (requires Firebase ID token) -->
+        <pre><code>curl -X POST https://api.robxinnovations.in/api/voice/token \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer &lt;FIREBASE_ID_TOKEN&gt;" \
+      -d '{"userId": "user_123"}'</code></pre>
       </div>
     </section>
   </div>
