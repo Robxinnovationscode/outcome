@@ -9,7 +9,12 @@ let db = null;
 let isInitialized = false;
 
 export const initializeFirebase = () => {
-  if (isInitialized) return db;
+  if (isInitialized && db) return db;
+  if (admin.apps && admin.apps.length > 0) {
+    db = admin.firestore();
+    isInitialized = true;
+    return db;
+  }
 
   try {
     // 1. Try Environment Variable (Base64 or JSON string)
