@@ -8,7 +8,13 @@ import {
   querySpending,
   getCategories,
   getHealth,
-  createVoiceToken
+  createVoiceToken,
+  getDiag,
+  ragIngest,
+  ragQuery,
+  ragFullSummary,
+  agentProcessAudio,
+  agentProcessText
 } from '../controllers/voiceController.js';
 import { verifyFirebaseIdToken } from '../middleware/verifyFirebaseIdToken.js';
 

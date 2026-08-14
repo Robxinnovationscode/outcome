@@ -368,7 +368,7 @@ export async function getDiag(req, res) {
         configured: livekitConfigured
       },
       notes: {
-        firebase: firebaseReady ? 'Firebase Admin SDK initialized' : 'Firebase not initialized (check FIREBASE_KEY_PATH or FIREBASE_SERVICE_ACCOUNT_KEY)'.
+        firebase: firebaseReady ? 'Firebase Admin SDK initialized' : 'Firebase not initialized (check FIREBASE_KEY_PATH or FIREBASE_SERVICE_ACCOUNT_KEY)'
       }
     });
   } catch (err) {

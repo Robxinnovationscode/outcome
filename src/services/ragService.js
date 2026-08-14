@@ -2,27 +2,6 @@ import { getEmbedding } from './embeddingService.js';
 import { ingestEmbedding, queryTopK, fetchAllForUser } from './vectorStoreService.js';
 // use global fetch (Node 18+)
 
-async function callLLM(prompt, maxTokens = 512) {
-  if (process.env.OPENAI_API_KEY) {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'system', content: prompt }],
-        max_tokens: maxTokens
-      })
-    });
-    const d = await res.json();
-    return d.choices?.[0]?.message?.content || '';
-  }
-  // fallback: return prompt truncated
-  return prompt.slice(0, Math.min(1000, prompt.length));
-}
-
 export async function ingestTextForRag({ userId = 'default_user', sourceId = null, text = '' }) {
   const embedding = await getEmbedding(text);
   return ingestEmbedding({ userId, sourceId, text, embedding });

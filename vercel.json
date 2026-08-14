@@ -1,9 +1,13 @@
 {
   "version": 2,
   "rewrites": [
+    { "source": "/api/voice", "destination": "/api/index.js" },
     { "source": "/api/voice/(.*)", "destination": "/api/index.js" },
+    { "source": "/api", "destination": "/api/index.js" },
     { "source": "/api/(.*)", "destination": "/api/index.js" },
     { "source": "/health", "destination": "/api/index.js" },
-    { "source": "/categories", "destination": "/api/index.js" }
+    { "source": "/categories", "destination": "/api/index.js" },
+    { "source": "/api-info", "destination": "/api/index.js" },
+    { "source": "/(.*)", "destination": "/api/index.js" }
   ]
 }
