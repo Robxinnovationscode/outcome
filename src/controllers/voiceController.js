@@ -1,10 +1,10 @@
 import { transcribeAudio } from '../services/sttService.js';
 import { parseUtterance } from '../services/nluEngine.js';
 import { sessionManager } from '../services/sessionManager.js';
-import { executeFirestoreCRUD } from '../services/firestoreService.js';
+import { executeFirestoreCRUD, fetchAllTransactions } from '../services/firestoreService.js';
 import { createParticipantToken, getLiveKitUrl } from '../services/livekitTokenService.js';
 import { CATEGORY_TAXONOMY, DEFAULT_CONFIDENCE_THRESHOLD } from '../config/constants.js';
-import { ingestTextForRag, queryRag, summarizeFullHistory } from '../services/ragService.js';
+import { ingestTextForRag, queryRag, summarizeFullHistory, callLLM } from '../services/ragService.js';
 
 /**
  * Controller 1: Process Audio Input (Multipart file or Base64 string)
@@ -36,6 +36,15 @@ export async function processAudio(req, res) {
         confirmationMessage = `Parsed transcript: "${rawTranscript}". Missing required info: ${parsedData.missing_fields.join(', ')}. Please clarify before writing.`;
       } else {
         dbResult = await executeFirestoreCRUD('create', parsedData, userId);
+        // Ingest into RAG
+        try {
+          await ingestTextForRag({
+            userId,
+            text: `${parsedData.transaction_type} of ₹${parsedData.amount} for ${parsedData.category} on ${parsedData.date}. Notes: ${parsedData.notes}`
+          });
+        } catch (e) {
+          // ignore rag error
+        }
       }
     }
 
@@ -111,6 +120,14 @@ export async function processText(req, res) {
     let dbResult = null;
     if (model.toUpperCase() === 'B' || autoCommit) {
       dbResult = await executeFirestoreCRUD('create', parsedData, userId);
+      try {
+        await ingestTextForRag({
+          userId,
+          text: `${parsedData.transaction_type} of ₹${parsedData.amount} for ${parsedData.category} on ${parsedData.date}. Notes: ${parsedData.notes}`
+        });
+      } catch (e) {
+        // ignore rag error
+      }
     }
 
     return res.status(200).json({
@@ -181,13 +198,24 @@ export async function querySpending(req, res) {
       return res.status(400).json({ error: 'queryText is required.' });
     }
 
-    // Read records from firestore
-    const dbResult = await executeFirestoreCRUD('read', { transaction_type: 'expense' }, userId);
+    const transactions = await fetchAllTransactions(userId);
+    const totalExpenses = transactions.filter(t => t.transaction_type === 'expense').reduce((sum, t) => sum + (t.amount || 0), 0);
+    const totalIncome = transactions.filter(t => t.transaction_type === 'income').reduce((sum, t) => sum + (t.amount || 0), 0);
+    const totalInvestments = transactions.filter(t => t.transaction_type === 'investment').reduce((sum, t) => sum + (t.amount || 0), 0);
+
+    // RAG analysis
+    let ragResult = null;
+    try {
+      ragResult = await queryRag({ userId, query: queryText, k: 5 });
+    } catch (e) {
+      // ignore
+    }
 
     return res.status(200).json({
       query: queryText,
-      answer: `Found ${dbResult.count || 0} recent transactions matching your request. Total expenses recorded: ₹${dbResult.records ? dbResult.records.reduce((acc, r) => acc + (r.amount || 0), 0) : 0}.`,
-      records: dbResult.records || []
+      answer: `Found ${transactions.length} total records. Total Expenses: ₹${totalExpenses.toLocaleString('en-IN')}, Income: ₹${totalIncome.toLocaleString('en-IN')}, Investments: ₹${totalInvestments.toLocaleString('en-IN')}.`,
+      summary: ragResult?.summary || null,
+      records: transactions
     });
   } catch (error) {
     return res.status(500).json({ error: 'Query failed', details: error.message });
@@ -195,7 +223,65 @@ export async function querySpending(req, res) {
 }
 
 /**
- * Controller 6: Category Taxonomy Metadata
+ * Controller 6: List All Transactions
+ */
+export async function listAllTransactions(req, res) {
+  try {
+    const userId = req.query.userId || req.user?.uid || 'default_user';
+    const records = await fetchAllTransactions(userId);
+    return res.status(200).json({
+      success: true,
+      count: records.length,
+      transactions: records
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+/**
+ * Controller: Direct Create Transaction
+ */
+export async function createTransactionDirect(req, res) {
+  try {
+    const userId = req.body.userId || req.user?.uid || 'default_user';
+    const result = await executeFirestoreCRUD('create', req.body, userId);
+    return res.status(200).json({ success: true, result });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+/**
+ * Controller: Direct Update Transaction
+ */
+export async function updateTransactionDirect(req, res) {
+  try {
+    const { type, id } = req.params;
+    const userId = req.body.userId || req.user?.uid || 'default_user';
+    const result = await executeFirestoreCRUD('update', { transaction_type: type, docId: id, ...req.body }, userId);
+    return res.status(200).json({ success: true, result });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+/**
+ * Controller: Direct Delete Transaction
+ */
+export async function deleteTransactionDirect(req, res) {
+  try {
+    const { type, id } = req.params;
+    const userId = req.query.userId || req.body?.userId || req.user?.uid || 'default_user';
+    const result = await executeFirestoreCRUD('delete', { transaction_type: type, docId: id }, userId);
+    return res.status(200).json({ success: true, result });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+/**
+ * Controller: Category Taxonomy Metadata
  */
 export function getCategories(req, res) {
   return res.status(200).json({
@@ -203,19 +289,15 @@ export function getCategories(req, res) {
   });
 }
 
+/**
+ * Controller: LiveKit Participant Token Generation
+ */
 export async function createVoiceToken(req, res) {
   try {
-    const { userId, roomName } = req.body;
-    const identity = userId || req.user?.uid;
-
-    if (!identity) {
-      return res.status(400).json({
-        success: false,
-        message: 'userId is required for token generation'
-      });
-    }
-
+    const { userId, roomName } = req.body || {};
+    const identity = userId || req.user?.uid || `user_${Date.now()}`;
     const targetRoom = roomName || `finance-${identity}`;
+
     const participantToken = await createParticipantToken({
       identity: String(identity),
       roomName: targetRoom,
@@ -229,7 +311,8 @@ export async function createVoiceToken(req, res) {
       success: true,
       server_url: getLiveKitUrl(),
       room_name: targetRoom,
-      participant_token: participantToken
+      participant_token: participantToken,
+      userId: String(identity)
     });
   } catch (error) {
     console.error('LiveKit token generation failed:', error);
@@ -277,53 +360,141 @@ export async function ragFullSummary(req, res) {
   }
 }
 
-/** Agent pipeline endpoints (STT -> NLU -> LLM -> optional TTS)
- * These endpoints orchestrate the flow and return text responses; TTS is stubbed unless TTS provider configured.
+/**
+ * Controller: Conversational Agent Endpoint (Handles live voice / text conversation with LiveKit, NLU, RAG, and multi-action CRUD)
  */
-export async function agentProcessText(req, res) {
+export async function conversationalAgent(req, res) {
   try {
-    const { text, userId = 'default_user', model = 'A', autoCommit = false } = req.body;
-    if (!text) return res.status(400).json({ success: false, message: 'text required' });
-
-    const parsed = await parseUtterance(text, {});
-    // if missing, ask follow-up
-    if (parsed.missing_fields && parsed.missing_fields.length > 0) {
-      return res.status(200).json({ success: true, requires_clarification: true, missing_fields: parsed.missing_fields, follow_up: generateFollowUpQuestion(parsed) });
+    const { text, userId = 'default_user', sessionId } = req.body;
+    if (!text || text.trim() === '') {
+      return res.status(400).json({ success: false, error: 'text is required' });
     }
 
+    const lower = text.toLowerCase().trim();
+
+    // Detect User Intent: DELETE, UPDATE, QUERY/READ, RAG_SUMMARY, or CREATE
+    const isDelete = /\b(delete|remove|cancel|discard|erase|hatao|mitado)\b/i.test(lower);
+    const isUpdate = /\b(update|change|modify|correct|badlo|set)\b/i.test(lower);
+    const isQuery = /\b(what|how much|total|show|list|summary|spending|expenses|tell me|kitna|dekhao|kya)\b/i.test(lower);
+    const isSummary = /\b(summary|overview|health|report|analysis|advice)\b/i.test(lower);
+
+    let action_performed = 'create';
+    let spokenResponse = '';
     let dbResult = null;
-    if (model.toUpperCase() === 'B' || autoCommit) {
-      dbResult = await executeFirestoreCRUD('create', parsed, userId);
+    let ragResult = null;
+    let parsedData = null;
+
+    // 1. Intent: DELETE
+    if (isDelete) {
+      action_performed = 'delete';
+      parsedData = await parseUtterance(text, {});
+      dbResult = await executeFirestoreCRUD('delete', parsedData, userId);
+      if (dbResult.success) {
+        spokenResponse = `Deleted your most recent ${parsedData.category !== 'Other' ? parsedData.category : parsedData.transaction_type} transaction.`;
+      } else {
+        spokenResponse = dbResult.error || `Could not find any transaction to delete.`;
+      }
+    }
+    // 2. Intent: UPDATE
+    else if (isUpdate) {
+      action_performed = 'update';
+      parsedData = await parseUtterance(text, {});
+      dbResult = await executeFirestoreCRUD('update', parsedData, userId);
+      if (dbResult.success) {
+        spokenResponse = `Updated your ${parsedData.category} transaction to ₹${parsedData.amount}.`;
+      } else {
+        spokenResponse = dbResult.error || `Could not find transaction to update.`;
+      }
+    }
+    // 3. Intent: QUERY / RAG SUMMARY
+    else if (isSummary || (isQuery && !/\b(spent|paid|bought|received|credited|invested)\b/i.test(lower))) {
+      action_performed = 'query';
+      const allTx = await fetchAllTransactions(userId);
+      const totalExp = allTx.filter(t => t.transaction_type === 'expense').reduce((acc, t) => acc + (t.amount || 0), 0);
+      const totalInc = allTx.filter(t => t.transaction_type === 'income').reduce((acc, t) => acc + (t.amount || 0), 0);
+      const totalInv = allTx.filter(t => t.transaction_type === 'investment').reduce((acc, t) => acc + (t.amount || 0), 0);
+
+      try {
+        ragResult = await queryRag({ userId, query: text, k: 4 });
+      } catch (e) {
+        // ignore
+      }
+
+      if (isSummary) {
+        spokenResponse = `Here is your financial summary: You have ₹${totalInc.toLocaleString('en-IN')} income, ₹${totalExp.toLocaleString('en-IN')} expenses, and ₹${totalInv.toLocaleString('en-IN')} investments.`;
+      } else {
+        spokenResponse = `You have ${allTx.length} total records logged. Total expenses are ₹${totalExp.toLocaleString('en-IN')} and income is ₹${totalInc.toLocaleString('en-IN')}.`;
+      }
+    }
+    // 4. Intent: CREATE (Default financial transaction parsing & logging)
+    else {
+      action_performed = 'create';
+      parsedData = await parseUtterance(text, {});
+
+      // Missing critical fields -> Ask clarification
+      if (parsedData.missing_fields && parsedData.missing_fields.length > 0) {
+        const followUp = generateFollowUpQuestion(parsedData);
+        return res.status(200).json({
+          success: true,
+          action_performed: 'clarification_needed',
+          requires_clarification: true,
+          missing_fields: parsedData.missing_fields,
+          spokenResponse: followUp,
+          follow_up_question: followUp,
+          parsedData
+        });
+      }
+
+      // Execute CRUD Create in Model B
+      dbResult = await executeFirestoreCRUD('create', parsedData, userId);
+
+      // Ingest into RAG vector store
+      try {
+        await ingestTextForRag({
+          userId,
+          text: `${parsedData.transaction_type} of ₹${parsedData.amount} for ${parsedData.category} on ${parsedData.date}. Notes: ${parsedData.notes}`
+        });
+      } catch (e) {
+        // ignore
+      }
+
+      spokenResponse = `Got it! Recorded ${parsedData.transaction_type.toUpperCase()} of ₹${parsedData.amount} for ${parsedData.category} on ${parsedData.date}.`;
     }
 
-    // LLM-generated assistant reply
-    let assistantReply = `Recorded ${parsed.transaction_type} of ₹${parsed.amount} for ${parsed.category} on ${parsed.date}.`;
-    try {
-      const { callLLM } = await import('../services/ragService.js');
-      // fallback prompt
-      const p = `You are assistant. Briefly confirm: ${JSON.stringify(parsed)}`;
-      assistantReply = (await callLLM(p, 200)) || assistantReply;
-    } catch (e) {
-      // ignore
-    }
+    // Refresh all transactions list
+    const updatedTransactions = await fetchAllTransactions(userId);
 
-    return res.status(200).json({ success: true, parsed, dbResult, assistantReply });
-  } catch (err) {
-    console.error('Agent text process failed:', err.message || err);
-    return res.status(500).json({ success: false, message: err.message });
+    return res.status(200).json({
+      success: true,
+      action_performed,
+      spokenResponse,
+      confirmation_spoken: spokenResponse,
+      parsedData,
+      dbResult,
+      ragResult,
+      transactions: updatedTransactions
+    });
+  } catch (error) {
+    console.error('Conversational agent error:', error);
+    return res.status(500).json({ success: false, error: error.message });
   }
+}
+
+/** Agent pipeline endpoints */
+export async function agentProcessText(req, res) {
+  return conversationalAgent(req, res);
 }
 
 export async function agentProcessAudio(req, res) {
   try {
     const file = req.file;
-    const { audioBase64, userId = 'default_user', model = 'A', autoCommit = false } = req.body;
+    const { audioBase64, userId = 'default_user' } = req.body;
     if (!file && !audioBase64) return res.status(400).json({ success: false, message: 'audio required' });
 
     const stt = await transcribeAudio({ file, audioBase64 });
-    // reuse agentProcessText logic
     req.body.text = stt.transcript;
-    return agentProcessText(req, res);
+    req.body.userId = userId;
+    return conversationalAgent(req, res);
   } catch (err) {
     console.error('Agent audio process failed:', err.message || err);
     return res.status(500).json({ success: false, message: err.message });
@@ -340,6 +511,9 @@ export function getHealth(req, res) {
     version: '1.0.0',
     timestamp: new Date().toISOString(),
     supported_models: ['Model A (Voice/NLU JSON)', 'Model B (Voice/NLU + Direct Firestore CRUD)'],
+    livekit_enabled: true,
+    rag_enabled: true,
+    nlu_enabled: true,
     llm_enabled: Boolean(process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY),
     stt_provider: process.env.OPENAI_API_KEY ? 'OpenAI Whisper' : (process.env.GROQ_API_KEY ? 'Groq Whisper' : 'Built-in Fallback Decoder')
   });
@@ -368,7 +542,7 @@ export async function getDiag(req, res) {
         configured: livekitConfigured
       },
       notes: {
-        firebase: firebaseReady ? 'Firebase Admin SDK initialized' : 'Firebase not initialized (check FIREBASE_KEY_PATH or FIREBASE_SERVICE_ACCOUNT_KEY)'
+        firebase: firebaseReady ? 'Firebase Admin SDK initialized' : 'Firebase not initialized (using in-memory persistence sandbox)'
       }
     });
   } catch (err) {
@@ -379,10 +553,10 @@ export async function getDiag(req, res) {
 
 // Helpers
 function generateConfirmationText(data) {
-  const typeStr = data.transaction_type.toUpperCase();
+  const typeStr = (data.transaction_type || 'expense').toUpperCase();
   const amtStr = `₹${data.amount}`;
-  const catStr = data.category;
-  return `Got it! Recorded ${typeStr} of ${amtStr} for ${catStr} on ${data.date}.`;
+  const catStr = data.category || 'Other';
+  return `Got it! Recorded ${typeStr} of ${amtStr} for ${catStr} on ${data.date || 'today'}.`;
 }
 
 function generateFollowUpQuestion(data) {
@@ -398,3 +572,4 @@ function generateFollowUpQuestion(data) {
   }
   return `Could you please clarify the details of this transaction?`;
 }
+

@@ -3,93 +3,167 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LigthsON - Voice Agent API Sandbox & Dashboard</title>
+  <title>LigthsON - Voice Assistant with LiveKit, RAG & NLU</title>
   <link rel="stylesheet" href="styles.css">
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- LiveKit Client SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
 </head>
 <body>
   <div class="app-container">
     <!-- Header -->
     <header class="header">
       <div class="logo-area">
-        <span class="icon">💡</span>
+        <div class="logo-icon-wrapper">
+          <span class="logo-icon">💡</span>
+          <span class="pulse-ring"></span>
+        </div>
         <div>
-          <h1>LigthsON Voice Agent API</h1>
-          <p class="subtitle">Voice-Enabled Transaction Agent Endpoint & Interactive Sandbox</p>
+          <div class="brand-badge-row">
+            <h1>LigthsON Voice Agent</h1>
+            <span class="badge-tag">v2.0 • LIVEKIT + RAG + NLU</span>
+          </div>
+          <p class="subtitle">Real-time Conversational Voice Finance Assistant with Automated Firestore CRUD</p>
         </div>
       </div>
-      <div class="status-badge" id="api-status">
-        <span class="dot"></span> API Online
+      <div class="header-actions">
+        <div class="status-badge" id="api-status">
+          <span class="dot live-pulse"></span>
+          <span id="api-status-text">Connecting to API...</span>
+        </div>
+        <div class="status-badge livekit-badge" id="livekit-status-badge">
+          <span class="dot dot-amber" id="livekit-dot"></span>
+          <span id="livekit-status-text">LiveKit Idle</span>
+        </div>
       </div>
     </header>
 
-    <!-- Main Grid -->
-    <div class="dashboard-grid">
-      <!-- Left Panel: Interactive Voice & Text Input -->
-      <section class="card input-card">
-        <h2>🎙️ Voice & Text Transaction Tester</h2>
-        <p class="card-desc">Speak naturally or type a financial transaction sentence to test STT, NLU entity extraction, and Firestore CRUD payload generation.</p>
+    <!-- Top Hero Section: Talk to Your Voice Assistant with LiveKit -->
+    <section class="card hero-voice-card">
+      <div class="hero-header">
+        <div class="hero-info">
+          <h2>🎙️ Conversational Voice Assistant</h2>
+          <p>Talk naturally with your AI personal finance agent. LiveKit handles real-time audio streams while NLU, RAG, and Firestore execute database CRUD operations seamlessly.</p>
+        </div>
+        <div class="capability-pills">
+          <span class="pill"><span class="pill-dot"></span> 📡 LiveKit WebRTC</span>
+          <span class="pill"><span class="pill-dot"></span> 🧠 RAG Vector Memory</span>
+          <span class="pill"><span class="pill-dot"></span> 🔍 NLU Entity Parsing</span>
+          <span class="pill"><span class="pill-dot"></span> ⚡ Real-Time Firestore CRUD</span>
+        </div>
+      </div>
 
-        <!-- Mode Selector -->
-        <div class="toggle-group">
-          <label>Integration Model:</label>
-          <div class="radio-buttons">
-            <label class="radio-label">
-              <input type="radio" name="integrationModel" value="A" checked> Model A (JSON Schema Only)
-            </label>
-            <label class="radio-label">
-              <input type="radio" name="integrationModel" value="B"> Model B (Direct Firestore CRUD)
-            </label>
+      <!-- LiveKit Voice Conversation Controller -->
+      <div class="voice-assistant-hub">
+        <div class="visualizer-container">
+          <div class="avatar-speaker" id="agent-avatar">
+            <div class="avatar-glow"></div>
+            <span class="avatar-emoji" id="avatar-emoji">🤖</span>
+          </div>
+          <div class="wave-visualizer" id="wave-visualizer">
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+          </div>
+          <div class="assistant-status-text" id="assistant-state-text">
+            Click <strong>"Talk to Your Voice Assistant"</strong> to join LiveKit voice room and start talking.
           </div>
         </div>
 
-        <!-- Voice Microphone Section -->
-        <div class="mic-container">
-          <button id="mic-btn" class="mic-btn">
-            <span class="mic-icon">🎙️</span>
-            <span id="mic-text">Click Mic to Speak</span>
+        <!-- Main Action Trigger -->
+        <div class="voice-action-bar">
+          <button id="talk-assistant-btn" class="btn btn-hero">
+            <span class="btn-icon">🎙️</span>
+            <span class="btn-text" id="talk-btn-text">Talk to Your Voice Assistant</span>
           </button>
-          <div id="recording-indicator" class="recording-indicator hidden">
-            <span class="pulse"></span> Recording Audio... Speak Now
+          <button id="mute-mic-btn" class="btn btn-secondary hidden" title="Mute Microphone">
+            <span id="mute-icon">🎤</span>
+            <span id="mute-text">Mute Mic</span>
+          </button>
+          <button id="end-call-btn" class="btn btn-danger hidden" title="Disconnect LiveKit">
+            <span>🔴</span>
+            <span>Disconnect</span>
+          </button>
+          <div class="tts-toggle-wrapper">
+            <label class="toggle-switch">
+              <input type="checkbox" id="tts-audio-toggle" checked>
+              <span class="slider"></span>
+            </label>
+            <span class="toggle-label">🔊 Spoken Voice Replies</span>
           </div>
         </div>
 
-        <div class="divider"><span>OR TYPE UTTERANCE</span></div>
-
-        <!-- Text Utterance Input -->
-        <form id="text-form">
-          <div class="form-group">
-            <label for="utterance-input">Natural Language Voice Utterance:</label>
-            <input type="text" id="utterance-input" placeholder="e.g. Spent 500 rupees on groceries today" required>
+        <!-- LiveKit Connection Info Bar -->
+        <div class="livekit-info-strip hidden" id="livekit-info-strip">
+          <div class="info-item">
+            <span class="info-label">LiveKit Server:</span>
+            <span class="info-val" id="lk-server-val">Connecting...</span>
           </div>
-
-          <div class="quick-samples">
-            <span class="sample-label">Quick Examples:</span>
-            <button type="button" class="chip-btn" data-sample="Spent 500 rupees on groceries today">🛒 ₹500 Groceries</button>
-            <button type="button" class="chip-btn" data-sample="Add 25,000 salary credited to bank">💰 ₹25k Salary</button>
-            <button type="button" class="chip-btn" data-sample="Invested 5000 in Mutual Fund SIP">📈 ₹5k SIP</button>
-            <button type="button" class="chip-btn" data-sample="Add an expense">❓ Clarification Test</button>
+          <div class="info-item">
+            <span class="info-label">Room:</span>
+            <span class="info-val" id="lk-room-val">--</span>
           </div>
-
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary" id="submit-btn">
-              ⚡ Process Utterance
-            </button>
+          <div class="info-item">
+            <span class="info-label">Participant:</span>
+            <span class="info-val" id="lk-participant-val">--</span>
           </div>
-        </form>
-      </section>
+          <div class="info-item">
+            <span class="info-label">Audio Stream:</span>
+            <span class="info-val text-green" id="lk-audio-val">Active (48kHz)</span>
+          </div>
+        </div>
+      </div>
 
-      <!-- Right Panel: Structured Output & JSON Viewer -->
-      <section class="card output-card">
+      <!-- Quick Conversational Prompt Chips -->
+      <div class="voice-prompts-bar">
+        <span class="prompt-header">Try Speaking or Clicking:</span>
+        <div class="chips-container">
+          <button class="voice-chip" data-text="Spent 750 rupees on groceries today">🛒 <strong>Create:</strong> "Spent ₹750 on groceries"</button>
+          <button class="voice-chip" data-text="Add 65000 salary credited to bank account">💰 <strong>Create:</strong> "Add ₹65,000 salary"</button>
+          <button class="voice-chip" data-text="Invested 10000 in Mutual Fund SIP">📈 <strong>Create:</strong> "Invested ₹10k in SIP"</button>
+          <button class="voice-chip" data-text="What are my total expenses and recent transactions?">📊 <strong>Read/Query:</strong> "What are my total expenses?"</button>
+          <button class="voice-chip" data-text="Update my grocery expense to 900 rupees">✏️ <strong>Update:</strong> "Update grocery expense to ₹900"</button>
+          <button class="voice-chip" data-text="Delete my last expense">🗑️ <strong>Delete:</strong> "Delete my last expense"</button>
+          <button class="voice-chip" data-text="Give me a full financial health summary">🧠 <strong>RAG:</strong> "Financial health summary"</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Main Grid: Live Conversation & Database CRUD Ledger -->
+    <div class="dashboard-grid">
+      <!-- Left Column: Live Conversation Feed & Text Input Backup -->
+      <section class="card dialog-card">
         <div class="card-header">
-          <h2>📊 Extracted API Response</h2>
-          <span class="badge" id="confidence-badge">Confidence: --</span>
+          <div class="header-title-group">
+            <h3>💬 Live Conversation Feed</h3>
+            <span class="badge badge-accent" id="dialog-count-badge">0 Turns</span>
+          </div>
+          <button class="btn btn-xs btn-outline" id="clear-feed-btn">Clear Feed</button>
         </div>
 
-        <!-- Spoken Confirmation Box -->
-        <div class="confirmation-box" id="confirmation-box">
-          <span class="speaker-icon">🔊</span>
-          <span id="confirmation-text">Result will appear here after processing...</span>
+        <!-- Scrollable Conversation Feed -->
+        <div class="dialog-feed" id="dialog-feed">
+          <div class="dialog-msg agent-msg">
+            <div class="msg-avatar">🤖</div>
+            <div class="msg-content">
+              <div class="msg-header">
+                <strong>LigthsON Assistant</strong>
+                <span class="msg-time">Just now</span>
+              </div>
+              <p>Hello! I am your Voice Finance Assistant powered by <strong>LiveKit, RAG, and NLU</strong>. Click <em>"Talk to Your Voice Assistant"</em> or speak/type any transaction, update, query, or deletion instruction!</p>
+            </div>
+          </div>
         </div>
 
         <!-- Clarification Banner -->
@@ -101,75 +175,158 @@
           </div>
         </div>
 
-        <!-- Parsed Fields Grid -->
-        <div class="fields-grid">
-          <div class="field-item">
-            <span class="field-label">Transaction Type</span>
-            <span class="field-value" id="res-type">--</span>
+        <!-- Text Utterance Input (Direct typing fallback) -->
+        <form id="text-form" class="chat-input-form">
+          <input type="text" id="utterance-input" placeholder="Type a voice utterance or transaction sentence..." required>
+          <button type="submit" class="btn btn-primary" id="submit-btn">
+            <span>⚡ Send</span>
+          </button>
+        </form>
+      </section>
+
+      <!-- Right Column: Live Firestore Ledger & Real-Time CRUD Board -->
+      <section class="card ledger-card">
+        <div class="card-header">
+          <div class="header-title-group">
+            <h3>💳 Live Firestore Transactions Ledger</h3>
+            <span class="badge badge-green" id="crud-mode-badge">Auto-Synced</span>
           </div>
-          <div class="field-item">
-            <span class="field-label">Amount</span>
-            <span class="field-value" id="res-amount">--</span>
-          </div>
-          <div class="field-item">
-            <span class="field-label">Category</span>
-            <span class="field-value" id="res-category">--</span>
-          </div>
-          <div class="field-item">
-            <span class="field-label">Date</span>
-            <span class="field-value" id="res-date">--</span>
+          <div class="ledger-actions">
+            <button class="btn btn-xs btn-primary" id="manual-add-btn">+ Add Transaction</button>
+            <button class="btn btn-xs btn-outline" id="refresh-ledger-btn">🔄 Refresh</button>
           </div>
         </div>
 
-        <!-- Raw JSON Schema Accordion -->
-        <div class="json-section">
-          <h3>RAW JSON API SCHEMA (Section 3.2 Specification)</h3>
-          <pre><code id="json-output">// JSON output will be rendered here</code></pre>
+        <!-- Financial Summary Totals -->
+        <div class="stats-summary-bar">
+          <div class="stat-box stat-expense">
+            <span class="stat-title">Total Expenses</span>
+            <span class="stat-amount" id="total-expenses-stat">₹0</span>
+          </div>
+          <div class="stat-box stat-income">
+            <span class="stat-title">Total Income</span>
+            <span class="stat-amount" id="total-income-stat">₹0</span>
+          </div>
+          <div class="stat-box stat-investment">
+            <span class="stat-title">Total Investments</span>
+            <span class="stat-amount" id="total-investments-stat">₹0</span>
+          </div>
+        </div>
+
+        <!-- Filter Tabs -->
+        <div class="ledger-filter-tabs">
+          <button class="filter-tab active" data-filter="all">All (<span id="count-all">0</span>)</button>
+          <button class="filter-tab" data-filter="expense">Expenses (<span id="count-exp">0</span>)</button>
+          <button class="filter-tab" data-filter="income">Income (<span id="count-inc">0</span>)</button>
+          <button class="filter-tab" data-filter="investment">Investments (<span id="count-inv">0</span>)</button>
+        </div>
+
+        <!-- Scrollable Transaction Cards List -->
+        <div class="transactions-list" id="transactions-list">
+          <div class="empty-state">Loading transactions ledger...</div>
         </div>
       </section>
     </div>
 
-    <!-- Bottom Section: API Endpoints & Hosted Link Integration Guide -->
+    <!-- Secondary Grid: RAG Vector Memory & JSON Inspector -->
+    <div class="secondary-grid">
+      <!-- RAG Intelligence Panel -->
+      <section class="card rag-card">
+        <div class="card-header">
+          <div class="header-title-group">
+            <h3>🧠 RAG Vector Memory & Financial Context</h3>
+            <span class="badge badge-purple" id="rag-status-badge">RAG Active</span>
+          </div>
+          <button class="btn btn-xs btn-outline" id="trigger-rag-summary-btn">📊 Generate Full Summary</button>
+        </div>
+        <p class="card-desc">Transactions are embedded in the semantic vector space in real-time. The agent queries past financial history to provide deep conversational answers.</p>
+        <div class="rag-content-box" id="rag-context-box">
+          <div class="rag-placeholder">Speak or query the assistant to inspect retrieved vector embeddings and LLM analysis.</div>
+        </div>
+      </section>
+
+      <!-- Raw API Schema & Inspection -->
+      <section class="card schema-card">
+        <div class="card-header">
+          <div class="header-title-group">
+            <h3>📜 Section 3.2 Schema Payload</h3>
+            <span class="badge" id="confidence-badge">Confidence: --</span>
+          </div>
+          <span class="model-tag" id="active-model-tag">Model B (CRUD)</span>
+        </div>
+        <pre><code id="json-output">// Latest NLU and CRUD payload will be rendered here</code></pre>
+      </section>
+    </div>
+
+    <!-- Bottom Integration Guide -->
     <section class="card integration-card">
-      <h2>🔌 Integration Code Guide (How to connect React Native / Backend to this hosted API)</h2>
-      <p>Use the endpoints below to connect your mobile application or backend to this hosted Voice Agent service:</p>
+      <h2>🔌 Mobile & Backend Integration Guide</h2>
+      <p>Connect your React Native app or backend to this hosted Voice Agent service:</p>
 
       <div class="endpoints-list">
         <div class="endpoint-row">
           <span class="method post">POST</span>
-          <code>/api/voice/process-text</code>
-          <span class="desc">Process natural language text utterance or multi-turn conversational session</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="method post">POST</span>
-          <code>/api/voice/process-audio</code>
-          <span class="desc">Upload recorded audio file (.wav/.m4a/.mp3) or base64 audio stream for STT + NLU</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="method post">POST</span>
-          <code>/api/voice/parse</code>
-          <span class="desc">Model A Parse-Only endpoint (returns JSON schema without DB write)</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="method post">POST</span>
           <code>/api/voice/token</code>
-          <span class="desc">Issue temporary LiveKit participant token (requires Firebase ID token in Authorization header)</span>
+          <span class="desc">Issue LiveKit WebRTC participant token for voice streaming</span>
         </div>
-      </div>
-
-      <div class="code-snippet-box">
-        <h4>cURL Examples:</h4>
-        <pre><code>curl -X POST https://api.robxinnovations.in/api/voice/process-text \
-      -H "Content-Type: application/json" \
-      -d '{"text": "Spent 500 rupees on groceries today", "model": "A"}'</code></pre>
-
-        <!-- Example: Requesting a LiveKit token (requires Firebase ID token) -->
-        <pre><code>curl -X POST https://api.robxinnovations.in/api/voice/token \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer &lt;FIREBASE_ID_TOKEN&gt;" \
-      -d '{"userId": "user_123"}'</code></pre>
+        <div class="endpoint-row">
+          <span class="method post">POST</span>
+          <code>/api/voice/agent/conversation</code>
+          <span class="desc">Conversational endpoint executing NLU + RAG + Firestore CRUD in one turn</span>
+        </div>
+        <div class="endpoint-row">
+          <span class="method get">GET</span>
+          <code>/api/voice/transactions</code>
+          <span class="desc">Fetch all real-time Firestore user transactions (Expenses, Income, Investments)</span>
+        </div>
+        <div class="endpoint-row">
+          <span class="method post">POST</span>
+          <code>/api/voice/process-text</code>
+          <span class="desc">Process raw natural language text utterance or multi-turn conversational session</span>
+        </div>
       </div>
     </section>
+  </div>
+
+  <!-- Manual Add / Edit Transaction Modal -->
+  <div class="modal-overlay hidden" id="transaction-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modal-title">Add Transaction</h3>
+        <button class="modal-close" id="modal-close-btn">&times;</button>
+      </div>
+      <form id="modal-form">
+        <input type="hidden" id="modal-doc-id">
+        <div class="form-group">
+          <label for="modal-type">Type:</label>
+          <select id="modal-type" required>
+            <option value="expense">Expense</option>
+            <option value="income">Income</option>
+            <option value="investment">Investment</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="modal-category">Category:</label>
+          <input type="text" id="modal-category" placeholder="e.g. Groceries, Salary, Stocks" required>
+        </div>
+        <div class="form-group">
+          <label for="modal-amount">Amount (INR):</label>
+          <input type="number" id="modal-amount" step="0.01" placeholder="e.g. 500" required>
+        </div>
+        <div class="form-group">
+          <label for="modal-date">Date:</label>
+          <input type="date" id="modal-date" required>
+        </div>
+        <div class="form-group">
+          <label for="modal-notes">Notes:</label>
+          <input type="text" id="modal-notes" placeholder="Optional notes...">
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-outline" id="modal-cancel-btn">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="modal-save-btn">Save to Firestore</button>
+        </div>
+      </form>
+    </div>
   </div>
 
   <script src="app.js"></script>

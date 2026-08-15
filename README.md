@@ -19,8 +19,15 @@ It enables users to speak natural language financial transactions (e.g. *"Spent 
 * **Conversational Fallback & Follow-ups:** Maintains short session state (`sessionId`) and asks clarifying questions when mandatory fields (`amount`, `category`) are missing or low-confidence.
 * **Interactive Web Sandbox:** Features a built-in browser UI at `http://localhost:3000` to visually test microphone recording, text parsing, and API responses.
 
-* **RAG Summarization:** Ingest transaction text into a vector store and run retrieval-augmented summaries across history (`/api/voice/rag/*`).
-* **Agent Orchestration:** Orchestrated STT → NLU → LLM flows for multi-turn conversation and automated commits (`/api/voice/agent/*`).
+* **Interactive LiveKit Voice Assistant:** Real-time WebRTC audio connection allowing hands-free voice conversations with animated audio visualizer and speech feedback.
+* **Conversational CRUD Operations:** Full database manipulation directly through speech dialog:
+  * **Create:** *"Spent 500 on groceries"* -> Logs expense to Firestore & ingests into RAG memory.
+  * **Read / Query:** *"What are my total expenses?"* -> Computes summaries & financial breakdown.
+  * **Update:** *"Update my grocery expense to 700"* -> Modifies existing record in ledger.
+  * **Delete:** *"Delete my last expense"* -> Removes record from Firestore with voice confirmation.
+* **RAG Financial Intelligence:** Semantic vector embeddings of user transactions providing instant multi-turn memory and holistic financial health analysis.
+* **Live Firestore Transactions Ledger:** Real-time visual dashboard synchronized with every voice turn.
+
 
 ---
 
