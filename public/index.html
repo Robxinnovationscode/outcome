@@ -3,16 +3,47 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LigthsON - Voice Assistant with LiveKit, RAG & NLU</title>
+  <title>LigthsON - Voice Assistant with RAG & NLU</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <!-- LiveKit Client SDK -->
+  <!-- WebRTC Audio Client SDK -->
   <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
 </head>
 <body>
-  <div class="app-container">
+
+  <!-- Secure Login Portal Overlay (Only for authorized users) -->
+  <div class="auth-gate-overlay" id="auth-gate-overlay">
+    <div class="auth-card">
+      <div class="auth-header">
+        <div class="auth-icon-badge">🔒</div>
+        <h2>Security Gateway</h2>
+        <p>Restricted Access • Please authenticate to access LigthsON Voice Dashboard</p>
+      </div>
+
+      <form id="auth-form" class="auth-form">
+        <div id="auth-error" class="auth-error-msg hidden">Invalid username or password</div>
+        <div class="form-group">
+          <label for="auth-username">Username:</label>
+          <input type="text" id="auth-username" placeholder="Enter username" autocomplete="username" required autofocus>
+        </div>
+        <div class="form-group">
+          <label for="auth-password">Password:</label>
+          <input type="password" id="auth-password" placeholder="Enter password" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="btn btn-hero btn-full" id="auth-submit-btn">
+          <span>🔓 Authenticate & Enter</span>
+        </button>
+      </form>
+      <div class="auth-footer">
+        <span>Protected by LigthsON Encrypted Session Gateway</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Application Container (Visible when authenticated) -->
+  <div class="app-container hidden" id="main-app-container">
     <!-- Header -->
     <header class="header">
       <div class="logo-area">
@@ -23,7 +54,7 @@
         <div>
           <div class="brand-badge-row">
             <h1>LigthsON Voice Agent</h1>
-            <span class="badge-tag">v2.0 • LIVEKIT + RAG + NLU</span>
+            <span class="badge-tag">v2.0 • RAG + NLU + VOICE ENGINE</span>
           </div>
           <p class="subtitle">Real-time Conversational Voice Finance Assistant with Automated Firestore CRUD</p>
         </div>
@@ -33,29 +64,30 @@
           <span class="dot live-pulse"></span>
           <span id="api-status-text">Connecting to API...</span>
         </div>
-        <div class="status-badge livekit-badge" id="livekit-status-badge">
-          <span class="dot dot-amber" id="livekit-dot"></span>
-          <span id="livekit-status-text">LiveKit Idle</span>
+        <div class="status-badge voice-engine-badge" id="voice-status-badge">
+          <span class="dot dot-amber" id="voice-dot"></span>
+          <span id="voice-status-text">Voice Engine Idle</span>
         </div>
+        <button class="btn btn-xs btn-outline" id="logout-btn" title="Logout">🔒 Logout</button>
       </div>
     </header>
 
-    <!-- Top Hero Section: Talk to Your Voice Assistant with LiveKit -->
+    <!-- Top Hero Section: Talk to Your Voice Assistant -->
     <section class="card hero-voice-card">
       <div class="hero-header">
         <div class="hero-info">
           <h2>🎙️ Conversational Voice Assistant</h2>
-          <p>Talk naturally with your AI personal finance agent. LiveKit handles real-time audio streams while NLU, RAG, and Firestore execute database CRUD operations seamlessly.</p>
+          <p>Talk naturally with your AI personal finance agent. Real-time audio streams while NLU, RAG, and Firestore execute database CRUD operations seamlessly.</p>
         </div>
         <div class="capability-pills">
-          <span class="pill"><span class="pill-dot"></span> 📡 LiveKit WebRTC</span>
+          <span class="pill"><span class="pill-dot"></span> 📡 Real-Time WebRTC Audio</span>
           <span class="pill"><span class="pill-dot"></span> 🧠 RAG Vector Memory</span>
           <span class="pill"><span class="pill-dot"></span> 🔍 NLU Entity Parsing</span>
           <span class="pill"><span class="pill-dot"></span> ⚡ Real-Time Firestore CRUD</span>
         </div>
       </div>
 
-      <!-- LiveKit Voice Conversation Controller -->
+      <!-- Voice Conversation Controller -->
       <div class="voice-assistant-hub">
         <div class="visualizer-container">
           <div class="avatar-speaker" id="agent-avatar">
@@ -77,7 +109,7 @@
             <span class="wave-bar"></span>
           </div>
           <div class="assistant-status-text" id="assistant-state-text">
-            Click <strong>"Talk to Your Voice Assistant"</strong> to join LiveKit voice room and start talking.
+            Click <strong>"Talk to Your Voice Assistant"</strong> to join voice room and start talking.
           </div>
         </div>
 
@@ -91,7 +123,7 @@
             <span id="mute-icon">🎤</span>
             <span id="mute-text">Mute Mic</span>
           </button>
-          <button id="end-call-btn" class="btn btn-danger hidden" title="Disconnect LiveKit">
+          <button id="end-call-btn" class="btn btn-danger hidden" title="Disconnect Voice Room">
             <span>🔴</span>
             <span>Disconnect</span>
           </button>
@@ -104,23 +136,23 @@
           </div>
         </div>
 
-        <!-- LiveKit Connection Info Bar -->
-        <div class="livekit-info-strip hidden" id="livekit-info-strip">
+        <!-- Voice Connection Info Bar -->
+        <div class="voice-info-strip hidden" id="voice-info-strip">
           <div class="info-item">
-            <span class="info-label">LiveKit Server:</span>
-            <span class="info-val" id="lk-server-val">Connecting...</span>
+            <span class="info-label">Voice Server:</span>
+            <span class="info-val" id="stream-server-val">Connecting...</span>
           </div>
           <div class="info-item">
             <span class="info-label">Room:</span>
-            <span class="info-val" id="lk-room-val">--</span>
+            <span class="info-val" id="stream-room-val">--</span>
           </div>
           <div class="info-item">
             <span class="info-label">Participant:</span>
-            <span class="info-val" id="lk-participant-val">--</span>
+            <span class="info-val" id="stream-participant-val">--</span>
           </div>
           <div class="info-item">
             <span class="info-label">Audio Stream:</span>
-            <span class="info-val text-green" id="lk-audio-val">Active (48kHz)</span>
+            <span class="info-val text-green" id="stream-audio-val">Active (48kHz WebRTC)</span>
           </div>
         </div>
       </div>
@@ -161,7 +193,7 @@
                 <strong>LigthsON Assistant</strong>
                 <span class="msg-time">Just now</span>
               </div>
-              <p>Hello! I am your Voice Finance Assistant powered by <strong>LiveKit, RAG, and NLU</strong>. Click <em>"Talk to Your Voice Assistant"</em> or speak/type any transaction, update, query, or deletion instruction!</p>
+              <p>Hello! I am your Voice Finance Assistant powered by <strong>RAG and NLU</strong>. Click <em>"Talk to Your Voice Assistant"</em> or speak/type any transaction, update, query, or deletion instruction!</p>
             </div>
           </div>
         </div>
@@ -267,7 +299,7 @@
         <div class="endpoint-row">
           <span class="method post">POST</span>
           <code>/api/voice/token</code>
-          <span class="desc">Issue LiveKit WebRTC participant token for voice streaming</span>
+          <span class="desc">Issue WebRTC voice participant token for real-time streaming</span>
         </div>
         <div class="endpoint-row">
           <span class="method post">POST</span>

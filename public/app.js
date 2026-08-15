@@ -1,4 +1,13 @@
 document.addEventListener('DOMContentLoaded', () => {
+  // Authentication Security Gate Elements
+  const authOverlay = document.getElementById('auth-gate-overlay');
+  const mainAppContainer = document.getElementById('main-app-container');
+  const authForm = document.getElementById('auth-form');
+  const authUsername = document.getElementById('auth-username');
+  const authPassword = document.getElementById('auth-password');
+  const authError = document.getElementById('auth-error');
+  const logoutBtn = document.getElementById('logout-btn');
+
   // DOM Elements
   const talkBtn = document.getElementById('talk-assistant-btn');
   const talkBtnText = document.getElementById('talk-btn-text');
@@ -8,13 +17,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const endCallBtn = document.getElementById('end-call-btn');
   const ttsAudioToggle = document.getElementById('tts-audio-toggle');
   
-  const livekitBadge = document.getElementById('livekit-status-badge');
-  const livekitDot = document.getElementById('livekit-dot');
-  const livekitStatusText = document.getElementById('livekit-status-text');
-  const livekitInfoStrip = document.getElementById('livekit-info-strip');
-  const lkServerVal = document.getElementById('lk-server-val');
-  const lkRoomVal = document.getElementById('lk-room-val');
-  const lkParticipantVal = document.getElementById('lk-participant-val');
+  const voiceBadge = document.getElementById('voice-status-badge');
+  const voiceDot = document.getElementById('voice-dot');
+  const voiceStatusText = document.getElementById('voice-status-text');
+  const voiceInfoStrip = document.getElementById('voice-info-strip');
+  const streamServerVal = document.getElementById('stream-server-val');
+  const streamRoomVal = document.getElementById('stream-room-val');
+  const streamParticipantVal = document.getElementById('stream-participant-val');
   
   const agentAvatar = document.getElementById('agent-avatar');
   const avatarEmoji = document.getElementById('avatar-emoji');
@@ -62,7 +71,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const modalNotes = document.getElementById('modal-notes');
 
   // Application State
-  let livekitRoom = null;
+  let voiceRoom = null;
   let localAudioTrack = null;
   let isCallActive = false;
   let isMuted = false;
@@ -76,17 +85,69 @@ document.addEventListener('DOMContentLoaded', () => {
   let visualizerAnimFrame = null;
   const currentUserId = 'user_' + Math.random().toString(36).substr(2, 6);
 
-  // Initialize
-  checkApiHealth();
-  loadTransactions();
-  initSpeechRecognition();
+  // -------------------------------------------------------------
+  // 1. SECURITY AUTHENTICATION GATE (Username: admin, Password: GODADDYLIVE)
+  // -------------------------------------------------------------
+  const AUTH_KEY = 'ligthson_security_session';
+  checkAuth();
+
+  function checkAuth() {
+    const isAuthed = sessionStorage.getItem(AUTH_KEY) === 'authenticated_admin';
+    if (isAuthed) {
+      authOverlay.classList.add('hidden');
+      mainAppContainer.classList.remove('hidden');
+      initAppDashboard();
+    } else {
+      authOverlay.classList.remove('hidden');
+      mainAppContainer.classList.add('hidden');
+    }
+  }
+
+  authForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const user = authUsername.value.trim();
+    const pass = authPassword.value.trim();
+
+    // Validate Username: admin (case-insensitive) & Password: GODADDYLIVE (or godaddylive)
+    const validUser = user.toLowerCase() === 'admin';
+    const validPass = pass.toLowerCase() === 'godaddylive' || pass === 'GODADDYLIVE';
+
+    if (validUser && validPass) {
+      authError.classList.add('hidden');
+      sessionStorage.setItem(AUTH_KEY, 'authenticated_admin');
+      authOverlay.classList.add('hidden');
+      mainAppContainer.classList.remove('hidden');
+      initAppDashboard();
+    } else {
+      authError.classList.remove('hidden');
+      authError.textContent = '❌ Access Denied: Invalid Username or Password.';
+    }
+  });
+
+  logoutBtn.addEventListener('click', () => {
+    sessionStorage.removeItem(AUTH_KEY);
+    if (isCallActive) disconnectVoiceSession();
+    authUsername.value = '';
+    authPassword.value = '';
+    authError.classList.add('hidden');
+    authOverlay.classList.remove('hidden');
+    mainAppContainer.classList.add('hidden');
+  });
+
+  // -------------------------------------------------------------
+  // 2. DASHBOARD INITIALIZATION
+  // -------------------------------------------------------------
+  function initAppDashboard() {
+    checkApiHealth();
+    loadTransactions();
+    initSpeechRecognition();
+  }
 
   // API Health Check
   async function checkApiHealth() {
     try {
       const res = await fetch('/api/voice/health');
       const data = await res.json();
-      const apiStatusEl = document.getElementById('api-status');
       const apiStatusText = document.getElementById('api-status-text');
       if (data.status === 'online') {
         apiStatusText.textContent = 'API Online (NLU + RAG)';
@@ -96,30 +157,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // LiveKit Connection Handler
+  // Voice Session Connection Handler
   talkBtn.addEventListener('click', async () => {
     if (!isCallActive) {
-      await startLiveKitVoiceSession();
+      await startVoiceSession();
     } else {
-      // If already in call, trigger voice listen or speak
       startListeningTurn();
     }
   });
 
   endCallBtn.addEventListener('click', () => {
-    disconnectLiveKitVoiceSession();
+    disconnectVoiceSession();
   });
 
   muteBtn.addEventListener('click', () => {
     toggleMute();
   });
 
-  async function startLiveKitVoiceSession() {
+  async function startVoiceSession() {
     try {
-      setAssistantState('connecting', 'Connecting to LiveKit Voice Room...');
+      setAssistantState('connecting', 'Connecting to AI Voice Engine...');
       talkBtnText.textContent = 'Connecting...';
 
-      // 1. Fetch LiveKit Token from API
+      // 1. Fetch WebRTC Participant Token from API
       const tokenRes = await fetch('/api/voice/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -131,17 +191,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const tokenData = await tokenRes.json();
       if (!tokenData.success || !tokenData.participant_token) {
-        throw new Error(tokenData.message || 'Failed to acquire LiveKit token');
+        throw new Error(tokenData.message || 'Failed to acquire voice stream token');
       }
 
       const serverUrl = tokenData.server_url;
       const participantToken = tokenData.participant_token;
       const roomName = tokenData.room_name;
 
-      // 2. Connect to LiveKit Room via LiveKit Client SDK
+      // 2. Connect to Voice Room via Client SDK
       if (window.LivekitClient) {
         try {
-          livekitRoom = new window.LivekitClient.Room({
+          voiceRoom = new window.LivekitClient.Room({
             adaptiveStream: true,
             dynacast: true,
             audioCaptureDefaults: {
@@ -151,29 +211,26 @@ document.addEventListener('DOMContentLoaded', () => {
             }
           });
 
-          // LiveKit Event Listeners
-          livekitRoom.on(window.LivekitClient.RoomEvent.Connected, () => {
-            console.log('✅ Connected to LiveKit Room:', roomName);
+          voiceRoom.on(window.LivekitClient.RoomEvent.Connected, () => {
+            console.log('✅ Connected to Voice Room:', roomName);
           });
 
-          livekitRoom.on(window.LivekitClient.RoomEvent.Disconnected, () => {
-            console.log('🔌 Disconnected from LiveKit Room');
-            handleLiveKitDisconnected();
+          voiceRoom.on(window.LivekitClient.RoomEvent.Disconnected, () => {
+            console.log('🔌 Disconnected from Voice Room');
+            handleVoiceDisconnected();
           });
 
           // Connect to room
-          await livekitRoom.connect(serverUrl, participantToken);
+          await voiceRoom.connect(serverUrl, participantToken);
 
           // Acquire and publish local microphone audio track
           localAudioTrack = await window.LivekitClient.createLocalAudioTrack();
-          await livekitRoom.localParticipant.publishTrack(localAudioTrack);
-          console.log('🎤 Microphone audio track published to LiveKit');
+          await voiceRoom.localParticipant.publishTrack(localAudioTrack);
+          console.log('🎤 Microphone audio track published to Voice Stream');
 
-          // Hook audio visualizer
           hookAudioVisualizer(localAudioTrack.mediaStream);
-        } catch (lkErr) {
-          console.warn('⚠️ LiveKit WebRTC direct transport fallback (local server ws fallback):', lkErr.message);
-          // Fallback to local audio capture if LiveKit standalone daemon is not running locally
+        } catch (transportErr) {
+          console.warn('⚠️ WebRTC transport fallback:', transportErr.message);
           await acquireLocalMicrophoneStream();
         }
       } else {
@@ -187,28 +244,24 @@ document.addEventListener('DOMContentLoaded', () => {
       muteBtn.classList.remove('hidden');
       endCallBtn.classList.remove('hidden');
 
-      // Update LiveKit Badge & Strip
-      livekitBadge.classList.add('connected');
-      livekitDot.classList.remove('dot-amber');
-      livekitDot.classList.add('dot');
-      livekitStatusText.textContent = 'LiveKit 🟢 Connected';
+      // Update Badge & Info Strip
+      voiceBadge.classList.add('connected');
+      voiceDot.classList.remove('dot-amber');
+      voiceDot.classList.add('dot');
+      voiceStatusText.textContent = 'Voice Engine 🟢 Connected';
 
-      livekitInfoStrip.classList.remove('hidden');
-      lkServerVal.textContent = serverUrl.replace('ws://', '').replace('wss://', '');
-      lkRoomVal.textContent = roomName;
-      lkParticipantVal.textContent = currentUserId;
+      voiceInfoStrip.classList.remove('hidden');
+      streamServerVal.textContent = serverUrl.replace('ws://', '').replace('wss://', '');
+      streamRoomVal.textContent = roomName;
+      streamParticipantVal.textContent = currentUserId;
 
-      setAssistantState('listening', 'Connected to LiveKit! Speak any transaction or instruction now (e.g. "Spent 500 on groceries" or "What are my expenses?").');
+      setAssistantState('listening', 'Voice Engine connected! Speak any transaction or instruction now (e.g. "Spent 500 on groceries" or "What are my expenses?").');
 
-      // Speak greeting if TTS enabled
       speakAssistantResponse("I'm listening. You can tell me to log an expense, update a transaction, or give you a spending summary.");
-
-      // Start continuous speech recognition
       startListeningTurn();
 
     } catch (error) {
-      console.error('Failed to start LiveKit voice session:', error);
-      alert('LiveKit Voice Setup Note: ' + error.message + '\n\nStarting browser voice engine mode...');
+      console.error('Failed to start voice session:', error);
       isCallActive = true;
       talkBtn.classList.add('active-call');
       talkBtnText.textContent = '🎙️ Listening (Voice Mode)...';
@@ -264,10 +317,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function disconnectLiveKitVoiceSession() {
-    if (livekitRoom) {
-      try { livekitRoom.disconnect(); } catch (e) {}
-      livekitRoom = null;
+  function disconnectVoiceSession() {
+    if (voiceRoom) {
+      try { voiceRoom.disconnect(); } catch (e) {}
+      voiceRoom = null;
     }
     if (localAudioTrack) {
       try { localAudioTrack.stop(); } catch (e) {}
@@ -279,23 +332,23 @@ document.addEventListener('DOMContentLoaded', () => {
     if (visualizerAnimFrame) {
       cancelAnimationFrame(visualizerAnimFrame);
     }
-    handleLiveKitDisconnected();
+    handleVoiceDisconnected();
   }
 
-  function handleLiveKitDisconnected() {
+  function handleVoiceDisconnected() {
     isCallActive = false;
     talkBtn.classList.remove('active-call');
     talkBtnText.textContent = 'Talk to Your Voice Assistant';
     muteBtn.classList.add('hidden');
     endCallBtn.classList.add('hidden');
 
-    livekitBadge.classList.remove('connected');
-    livekitDot.classList.remove('dot');
-    livekitDot.classList.add('dot-amber');
-    livekitStatusText.textContent = 'LiveKit Idle';
-    livekitInfoStrip.classList.add('hidden');
+    voiceBadge.classList.remove('connected');
+    voiceDot.classList.remove('dot');
+    voiceDot.classList.add('dot-amber');
+    voiceStatusText.textContent = 'Voice Engine Idle';
+    voiceInfoStrip.classList.add('hidden');
 
-    setAssistantState('idle', 'Click "Talk to Your Voice Assistant" to start talking with LiveKit.');
+    setAssistantState('idle', 'Click "Talk to Your Voice Assistant" to start talking.');
   }
 
   function toggleMute() {
@@ -368,7 +421,6 @@ document.addEventListener('DOMContentLoaded', () => {
         console.warn('Speech recognition warning:', err.error);
         isRecognizing = false;
         if (isCallActive && !isMuted) {
-          // Restart after short delay
           setTimeout(startListeningTurn, 800);
         }
       };
@@ -388,7 +440,7 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         speechRecognizer.start();
       } catch (e) {
-        // already started
+        // already active
       }
     }
   }
@@ -423,7 +475,6 @@ document.addEventListener('DOMContentLoaded', () => {
   async function processConversationalTurn(userText) {
     if (!userText || userText.trim() === '') return;
 
-    // 1. Append User Message to Live Dialog Feed
     appendDialogMessage('user', userText);
     setAssistantState('thinking', `Processing: "${userText}" with NLU & RAG...`);
 
@@ -440,13 +491,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await response.json();
       console.log('🤖 Conversational Agent Output:', data);
 
-      // Render Schema Output
       jsonOutput.textContent = JSON.stringify(data, null, 2);
       if (data.parsedData?.confidence) {
         confidenceBadge.textContent = `Confidence: ${Math.round(data.parsedData.confidence * 100)}%`;
       }
 
-      // Check Clarification
       if (data.requires_clarification) {
         clarificationBanner.classList.remove('hidden');
         clarificationMsg.textContent = data.follow_up_question;
@@ -454,11 +503,9 @@ document.addEventListener('DOMContentLoaded', () => {
         clarificationBanner.classList.add('hidden');
       }
 
-      // 2. Append Assistant Reply to Live Feed
       const reply = data.spokenResponse || data.confirmation_spoken || 'Transaction processed successfully.';
       appendDialogMessage('agent', reply, data.action_performed);
 
-      // 3. Update Transactions Ledger
       if (data.transactions) {
         allTransactions = data.transactions;
         renderLedger(allTransactions);
@@ -467,14 +514,12 @@ document.addEventListener('DOMContentLoaded', () => {
         await loadTransactions();
       }
 
-      // 4. Update RAG Context Box
       if (data.ragResult?.summary) {
         ragContextBox.innerHTML = `<strong>🧠 RAG Financial Summary:</strong><p>${data.ragResult.summary}</p>`;
       } else if (data.action_performed === 'create' && data.parsedData) {
         ragContextBox.innerHTML = `<strong>🧠 Vector Memory Ingested:</strong><p>Embedded: ${data.parsedData.transaction_type} of ₹${data.parsedData.amount} for ${data.parsedData.category} (${data.parsedData.date}).</p>`;
       }
 
-      // 5. Speak Assistant Reply
       setAssistantState('speaking', reply);
       speakAssistantResponse(reply, () => {
         if (isCallActive && !isMuted) {
@@ -534,12 +579,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel(); // Stop any pending speech
+      window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = 1.0;
       utterance.pitch = 1.0;
 
-      // Select natural English voice if available
       const voices = window.speechSynthesis.getVoices();
       const preferredVoice = voices.find(v => v.lang.includes('en-IN') || v.name.includes('Google') || v.name.includes('Natural')) || voices[0];
       if (preferredVoice) utterance.voice = preferredVoice;
@@ -579,7 +623,6 @@ document.addEventListener('DOMContentLoaded', () => {
       filtered = transactions.filter(t => t.transaction_type === currentFilter);
     }
 
-    // Update Tab Counts
     countAll.textContent = transactions.length;
     countExp.textContent = transactions.filter(t => t.transaction_type === 'expense').length;
     countInc.textContent = transactions.filter(t => t.transaction_type === 'income').length;
@@ -626,7 +669,6 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       `;
 
-      // Action Handlers
       card.querySelector('.edit-btn').addEventListener('click', () => openEditModal(tx));
       card.querySelector('.delete-btn').addEventListener('click', () => deleteTransaction(tx.transaction_type, tx.id));
 
@@ -737,7 +779,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       if (docId) {
-        // Update
         await fetch(`/api/voice/transactions/${type}/${docId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -745,7 +786,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         appendDialogMessage('agent', `Updated ${type} (${payload.category}) to ₹${payload.amount}.`, 'update');
       } else {
-        // Create
         await fetch(`/api/voice/transactions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
