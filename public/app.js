@@ -85,46 +85,91 @@ document.addEventListener('DOMContentLoaded', () => {
   let visualizerAnimFrame = null;
   const currentUserId = 'user_' + Math.random().toString(36).substr(2, 6);
 
-  // Voice Language Mode (cycling through all supported modes)
-  const LANG_MODES = [
-    { id: 'en-IN',   label: 'English (India)',       ttsLang: 'en-IN' },
-    { id: 'ta-IN',   label: 'Tamil',                  ttsLang: 'ta-IN' },
-    { id: 'hi-IN',   label: 'Hindi',                  ttsLang: 'hi-IN' },
-    { id: 'en-ta',   label: 'English + Tamil',         ttsLang: 'en-IN' },
-    { id: 'hi-en',   label: 'Hindi + English',         ttsLang: 'hi-IN' },
-  ];
-  let currentLangIdx = 0;
-
   // Proactive conversation context (remembers partial category)
   let proactiveContext = null; // { category, type }
 
-  // Preferred male TTS voice (set once voices load)
-  let preferredTTSVoice = null;
-  function loadPreferredVoice() {
+  // Auto-detected language from the last user transcript
+  let detectedLang = 'en-IN'; // default
+
+  // -------------------------------------------------------
+  // AUTO LANGUAGE DETECTOR — no buttons, no manual switching
+  // Reads the transcript and detects Tamil / Hindi / mixed
+  // -------------------------------------------------------
+  const TAMIL_MARKERS = [
+    'kaasu','panam','rooba','roobai','selavu','kuduthen','vanginen','kattinen',
+    'vanthathu','varavu','sambalam','kidaithathu','netru','nethu','naalai',
+    'kaaikari','maligai','kadai','thayir','arisi','paruppu','pal','saapadu',
+    'tiffin','padam','vandi','vaadagai','marunthu','thangam','pangu','mudalieedu',
+    'cheetu','seetu','thuni','latcham','ayiram','aayiram','kodi','nooru','pathu',
+    'aaru','yezhu','yettu','onpathu','anchu','naalu','moonu','rendu','onnu'
+  ];
+  const HINDI_MARKERS = [
+    'kharcha','diya','bhar diya','kharida','de diya','kharch','lag gaya','bhara',
+    'aaya','mila','kamaya','tankhwah','vetan','paisa','rupaye','nivesh','jama kiya',
+    'sona kharida','hazar','sau','lakh','sabzi','doodh','ration','bijli','kiraya',
+    'dawa','shagun','vaddi','vyapar','kal','kal ko','aaj'
+  ];
+
+  function detectLanguage(text) {
+    if (!text) return 'en-IN';
+    const lower = text.toLowerCase();
+
+    // Check for Tamil script characters
+    if (/[\u0B80-\u0BFF]/.test(text)) return 'ta-IN';
+    // Check for Hindi/Devanagari script characters
+    if (/[\u0900-\u097F]/.test(text)) return 'hi-IN';
+
+    const tamilHits = TAMIL_MARKERS.filter(w => lower.includes(w)).length;
+    const hindiHits = HINDI_MARKERS.filter(w => lower.includes(w)).length;
+
+    if (tamilHits > 0 && hindiHits === 0) return 'ta-IN';
+    if (hindiHits > 0 && tamilHits === 0) return 'hi-IN';
+    if (tamilHits > 0 && hindiHits > 0) return 'en-IN'; // mixed → English base
+    return 'en-IN'; // default English
+  }
+
+  // Pick best available TTS voice for a given language
+  function pickVoiceForLang(lang) {
     const voices = window.speechSynthesis.getVoices();
-    if (!voices || voices.length === 0) return;
-    // Priority: Male Indian English → Male Hindi → Any Google male → first en-IN → first
+    if (!voices || voices.length === 0) return null;
+
+    if (lang === 'ta-IN') {
+      return (
+        voices.find(v => v.lang === 'ta-IN') ||
+        voices.find(v => v.name.toLowerCase().includes('tamil')) ||
+        voices.find(v => v.lang === 'en-IN') ||
+        voices[0]
+      );
+    }
+    if (lang === 'hi-IN') {
+      return (
+        voices.find(v => v.lang === 'hi-IN') ||
+        voices.find(v => v.name.toLowerCase().includes('hemant')) ||
+        voices.find(v => v.name.toLowerCase().includes('kalpana')) ||
+        voices.find(v => v.lang === 'en-IN') ||
+        voices[0]
+      );
+    }
+    // English — prefer male Indian voice
     const maleMatchers = [
-      v => v.name.toLowerCase().includes('rishi'),           // Chrome Indian male
+      v => v.name.toLowerCase().includes('rishi'),
       v => v.name.toLowerCase().includes('deepak'),
-      v => v.name.toLowerCase().includes('hemant'),
-      v => v.name.toLowerCase().includes('karthik'),
-      v => v.lang === 'en-IN' && v.name.toLowerCase().includes('male'),
       v => v.name.toLowerCase().includes('google uk english male'),
+      v => v.lang === 'en-IN' && v.name.toLowerCase().includes('male'),
       v => v.name.toLowerCase().includes('google') && v.lang.startsWith('en'),
       v => v.lang === 'en-IN',
       v => v.lang.startsWith('en'),
     ];
-    for (const matcher of maleMatchers) {
-      const found = voices.find(matcher);
-      if (found) { preferredTTSVoice = found; break; }
+    for (const m of maleMatchers) {
+      const found = voices.find(m);
+      if (found) return found;
     }
-    if (!preferredTTSVoice) preferredTTSVoice = voices[0];
-    console.log('🎙️ TTS Voice selected:', preferredTTSVoice?.name);
+    return voices[0];
   }
+
+  // Lazy voice init when voices list loads
   if (window.speechSynthesis) {
-    window.speechSynthesis.onvoiceschanged = loadPreferredVoice;
-    loadPreferredVoice();
+    window.speechSynthesis.onvoiceschanged = () => pickVoiceForLang('en-IN');
   }
 
   // -------------------------------------------------------------
@@ -443,34 +488,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // --- Language Mode Selector UI (injected dynamically) ---
-  function buildLangSwitcher() {
-    const bar = document.querySelector('.voice-action-bar');
-    if (!bar || document.getElementById('lang-mode-btn')) return;
-    const btn = document.createElement('button');
-    btn.id = 'lang-mode-btn';
-    btn.className = 'btn btn-xs btn-outline';
-    btn.title = 'Switch voice language';
-    btn.style.cssText = 'margin-left:8px; font-size:12px; padding:4px 10px;';
-    btn.textContent = '🌐 ' + LANG_MODES[currentLangIdx].label;
-    btn.addEventListener('click', () => {
-      currentLangIdx = (currentLangIdx + 1) % LANG_MODES.length;
-      const mode = LANG_MODES[currentLangIdx];
-      btn.textContent = '🌐 ' + mode.label;
-      if (speechRecognizer) speechRecognizer.lang = mode.id === 'en-ta' ? 'ta-IN' : (mode.id === 'hi-en' ? 'hi-IN' : mode.id);
-      speakAssistantResponse('Language switched to ' + mode.label, null);
-    });
-    bar.appendChild(btn);
-  }
-
-  // Web Speech Recognition — Multi-Language
+  // Web Speech Recognition — Auto Multi-Language (en-IN base catches Tamil/Hindi words too)
   function initSpeechRecognition() {
     if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
       const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
       speechRecognizer = new SpeechRec();
       speechRecognizer.continuous = false;
       speechRecognizer.interimResults = false;
-      speechRecognizer.lang = 'en-IN'; // default; changes when user switches language
+      // Use en-IN as the STT capture lang — Chrome en-IN also picks up
+      // Hindi and Tamil transliterations (Tanglish/Hinglish) correctly.
+      speechRecognizer.lang = 'en-IN';
 
       speechRecognizer.onstart = () => {
         isRecognizing = true;
@@ -479,7 +506,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
       speechRecognizer.onresult = (event) => {
         const transcript = event.results[0][0].transcript;
-        console.log('🗣️ User Voice Transcript:', transcript);
+        // Auto-detect language from what was actually spoken
+        detectedLang = detectLanguage(transcript);
+        console.log('🗣️ Transcript:', transcript, '| Detected Lang:', detectedLang);
         utteranceInput.value = transcript;
         processConversationalTurn(transcript);
       };
@@ -495,11 +524,9 @@ document.addEventListener('DOMContentLoaded', () => {
       speechRecognizer.onend = () => {
         isRecognizing = false;
         if (isCallActive && !isMuted && !window.speechSynthesis.speaking) {
-          setTimeout(startListeningTurn, 400); // minimal gap between turns
+          setTimeout(startListeningTurn, 400);
         }
       };
-
-      buildLangSwitcher();
     }
   }
 
@@ -576,19 +603,23 @@ document.addEventListener('DOMContentLoaded', () => {
     appendDialogMessage('user', userText);
     setAssistantState('thinking', '⚡ Processing your request...');
 
+    // Auto-detect language from user's text (for text-input path too)
+    const textLang = detectLanguage(userText);
+    if (textLang !== 'en-IN') detectedLang = textLang;
+
     // -- PROACTIVE FLOW: If user only said a category word with no amount --
     const detected = detectCategoryFromText(userText);
     const detectedAmt = detectAmountFromText(userText);
 
     if (detected && !detectedAmt && !proactiveContext) {
-      // User said "groceries" or "sabzi" with no amount — ask proactively!
       proactiveContext = detected;
-      const followUp = `How much did you spend for ${detected.category}?`;
+      // Reply in same language as user spoke
+      const followUp = buildFollowUpInLang(detected.category, detectedLang);
       appendDialogMessage('agent', followUp, null);
       clarificationBanner.classList.remove('hidden');
       clarificationMsg.textContent = followUp;
       setAssistantState('speaking', followUp);
-      speakAssistantResponse(followUp, () => {
+      speakAssistantResponse(followUp, detectedLang, () => {
         if (isCallActive && !isMuted) {
           setAssistantState('listening', `Waiting for amount for ${detected.category}...`);
           startListeningTurn();
@@ -604,10 +635,9 @@ document.addEventListener('DOMContentLoaded', () => {
       proactiveContext = null;
       clarificationBanner.classList.add('hidden');
     } else if (proactiveContext && !detectedAmt) {
-      // Still no amount, keep asking
-      const followUp = `I didn't catch the amount. How much did you spend for ${proactiveContext.category}?`;
+      const followUp = buildFollowUpInLang(proactiveContext.category, detectedLang);
       appendDialogMessage('agent', followUp, null);
-      speakAssistantResponse(followUp, () => startListeningTurn());
+      speakAssistantResponse(followUp, detectedLang, () => startListeningTurn());
       return;
     } else {
       proactiveContext = null;
@@ -665,7 +695,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       setAssistantState('speaking', reply);
-      speakAssistantResponse(reply, () => {
+      speakAssistantResponse(reply, detectedLang, () => {
         if (isCallActive && !isMuted) {
           setAssistantState('listening', 'Listening for your next command...');
           startListeningTurn();
@@ -715,8 +745,52 @@ document.addEventListener('DOMContentLoaded', () => {
     dialogFeed.scrollTop = dialogFeed.scrollHeight;
   }
 
-  // Text-To-Speech Synthesis — Male Voice, Multi-Lang, High Speed
-  function speakAssistantResponse(text, onEndCallback) {
+  // -------------------------------------------------------
+  // PROACTIVE FOLLOW-UP PHRASES IN DETECTED LANGUAGE
+  // -------------------------------------------------------
+  function buildFollowUpInLang(category, lang) {
+    if (lang === 'ta-IN') {
+      // Tamil reply
+      const map = {
+        'Groceries':     `${category} ku evvalavu rooba kuduthunga?`,
+        'Food & Dining': `Saapadu ku evvalavu achu?`,
+        'Transport':     `${category} ku evvalavu kaasu achu?`,
+        'Utilities':     `${category} bill evvalavu?`,
+        'Rent':          `Vaadagai evvalavu?`,
+        'Entertainment': `${category} ku evvalavu rooba?`,
+        'Healthcare':    `${category} ku evvalavu rooba achu?`,
+        'Shopping':      `Evvalavu rooba selavachu?`,
+        'Salary':        `Evvalavu sambalam vanthathu?`,
+      };
+      return map[category] || `${category} ku evvalavu rooba?`;
+    }
+    if (lang === 'hi-IN') {
+      // Hindi reply
+      const map = {
+        'Groceries':     `${category} ke liye kitne rupaye kharch kiye?`,
+        'Food & Dining': `Khane ke liye kitna kharcha hua?`,
+        'Transport':     `${category} mein kitna kharch hua?`,
+        'Utilities':     `${category} ka bill kitna aaya?`,
+        'Rent':          `Kiraya kitna diya?`,
+        'Entertainment': `${category} ke liye kitne rupaye?`,
+        'Healthcare':    `${category} ka kharcha kitna aaya?`,
+        'Shopping':      `Kitne rupaye kharch kiye?`,
+        'Salary':        `Kitni salary mili?`,
+      };
+      return map[category] || `${category} ke liye kitne rupaye?`;
+    }
+    // English (default) — direct and friendly
+    return `How much did you spend for ${category}?`;
+  }
+
+  // -------------------------------------------------------
+  // TEXT-TO-SPEECH — Auto language, Male voice, 1.35x speed
+  // -------------------------------------------------------
+  function speakAssistantResponse(text, lang, onEndCallback) {
+    // Support legacy 2-arg calls: speakAssistantResponse(text, callback)
+    if (typeof lang === 'function') { onEndCallback = lang; lang = detectedLang; }
+    if (!lang) lang = detectedLang || 'en-IN';
+
     if (!ttsAudioToggle || !ttsAudioToggle.checked) {
       if (onEndCallback) onEndCallback();
       return;
@@ -726,48 +800,29 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Cancel any ongoing speech immediately
     window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
-
-    // Speed: 1.35 is fast & clear, feels natural and professional
-    utterance.rate  = 1.35;
-    utterance.pitch = 0.88;  // Slightly lower pitch = more masculine, deeper voice
+    utterance.rate   = 1.35;   // fast & natural
+    utterance.pitch  = 0.88;   // slightly deeper = male
     utterance.volume = 1.0;
+    utterance.lang   = lang;
 
-    // Set TTS language based on selected mode
-    const mode = LANG_MODES[currentLangIdx];
-    utterance.lang = mode.ttsLang;
+    // Pick best voice for this language automatically
+    const voice = pickVoiceForLang(lang);
+    if (voice) utterance.voice = voice;
+    console.log(`🔊 TTS → lang:${lang} | voice:${voice?.name} | text: ${text.slice(0,60)}...`);
 
-    // Assign best available voice
-    if (preferredTTSVoice) {
-      utterance.voice = preferredTTSVoice;
-    } else {
-      // Lazy-load voices and retry
-      const voices = window.speechSynthesis.getVoices();
-      if (voices.length > 0) {
-        loadPreferredVoice();
-        if (preferredTTSVoice) utterance.voice = preferredTTSVoice;
-      }
-    }
-
-    utterance.onend = () => { if (onEndCallback) onEndCallback(); };
-    utterance.onerror = (e) => {
-      console.warn('TTS error:', e.error);
-      if (onEndCallback) onEndCallback();
-    };
-
-    window.speechSynthesis.speak(utterance);
-
-    // Workaround: Chrome sometimes pauses long utterances — keep it alive
+    // Chrome keep-alive workaround for long utterances
     const keepAlive = setInterval(() => {
       if (!window.speechSynthesis.speaking) { clearInterval(keepAlive); return; }
       window.speechSynthesis.pause();
       window.speechSynthesis.resume();
     }, 10000);
-    utterance.onend = () => { clearInterval(keepAlive); if (onEndCallback) onEndCallback(); };
+    utterance.onend   = () => { clearInterval(keepAlive); if (onEndCallback) onEndCallback(); };
     utterance.onerror = (e) => { clearInterval(keepAlive); console.warn('TTS error:', e.error); if (onEndCallback) onEndCallback(); };
+
+    window.speechSynthesis.speak(utterance);
   }
 
   // Load Transactions from Backend
