@@ -27,17 +27,57 @@ export async function parseUtterance(transcript, options = {}) {
     } catch (err) {
       console.warn('⚠️ LLM NLU parse failed, falling back to rule-based NLU:', err.message);
     }
+import { CATEGORY_TAXONOMY, CATEGORY_SYNONYMS, NUMBER_WORDS, DEFAULT_CONFIDENCE_THRESHOLD } from '../config/constants.js';
+
+/**
+ * Parse transcript text into structured transaction object conforming to Section 3.2 schema.
+ *
+ * @param {string} transcript - Natural language transcript string (English, Tamil, Tanglish, Hindi, Hinglish)
+ * @param {Object} options - Configuration and session context
+ * @param {Object} options.customTaxonomy - Optional custom category taxonomy overriding default
+ * @param {Object} options.sessionContext - Context from multi-turn conversation
+ * @returns {Promise<Object>} Structured JSON schema output
+ */
+export async function parseUtterance(transcript, options = {}) {
+  const taxonomy = options.customTaxonomy || CATEGORY_TAXONOMY;
+  const context = options.sessionContext || {};
+
+  // Clean and normalize input
+  const text = (transcript || '').trim();
+  if (!text || text.length < 2) {
+    return {
+      transaction_type: 'expense',
+      amount: 0,
+      currency: 'INR',
+      category: 'Other',
+      date: getTodayFormatted(),
+      notes: '',
+      confidence: 0.1,
+      missing_fields: ['amount', 'category']
+    };
   }
 
-  // 2. Powerful Rule-Based & Heuristic NLU Engine
+  // 1. Check if LLM provider (OpenAI / Gemini) is available for deep multi-lingual NLU
+  if (process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY) {
+    try {
+      const llmResult = await parseUtteranceWithLLM(text, taxonomy, context);
+      if (llmResult && llmResult.transaction_type) {
+        return llmResult;
+      }
+    } catch (err) {
+      console.warn('⚠️ LLM NLU parse failed, falling back to rule-based NLU:', err.message);
+    }
+  }
+
+  // 2. Multi-Lingual Rule-Based NLU Engine (English, Tamil, Tanglish, Hindi, Hinglish)
   return parseUtteranceRuleBased(text, taxonomy, context);
 }
 
 /**
- * Rule-Based NLU Parser with Indian Financial Accent & Terminology Support
+ * Rule-Based Multi-Lingual NLU Parser (English, Tamil, Tanglish, Hindi, Hinglish)
  */
 function parseUtteranceRuleBased(text, taxonomy, context = {}) {
-  const lowerText = text.toLowerCase();
+  const lowerText = text.toLowerCase().trim();
 
   let transaction_type = context.transaction_type || null;
   let amount = context.amount || null;
@@ -47,19 +87,34 @@ function parseUtteranceRuleBased(text, taxonomy, context = {}) {
   let confidence = 0.95;
   const missing_fields = [];
 
-  // A. Detect Transaction Type
+  // A. Detect Transaction Type across Languages
   if (!transaction_type) {
     const expenseKeywords = [
-      'spent', 'spend', 'paid', 'buying', 'bought', 'expense', 'purchased',
-      'cost', 'kharcha', 'diya', 'bhar diya', 'bill paid', 'gave', 'de diya'
+      // English
+      'spent', 'spend', 'paid', 'buying', 'bought', 'expense', 'purchased', 'cost', 'bill paid', 'gave',
+      // Hindi / Hinglish
+      'kharcha', 'diya', 'bhar diya', 'kharida', 'de diya', 'kharch', 'lag gaya', 'bhara',
+      // Tamil / Tanglish
+      'selavu', 'kuduthen', 'vaanginen', 'kattinen', 'selavachu', 'kaasu kuduthen', 'rooba kuduthen',
+      'bill katnen', 'selavu pannen', 'kadaiyil', 'vangiten'
     ];
     const incomeKeywords = [
-      'received', 'got', 'credited', 'earned', 'salary', 'income', 'stipend',
-      'aaya', 'mila', 'payment received', 'credited to account', 'deposit'
+      // English
+      'received', 'got', 'credited', 'earned', 'salary', 'income', 'stipend', 'deposit',
+      // Hindi / Hinglish
+      'aaya', 'mila', 'kamaya', 'payment received', 'credited to account', 'tankhwah', 'vetan',
+      // Tamil / Tanglish
+      'sambalam', 'vanthathu', 'varavu', 'kidaithathu', 'kaasu vanthathu', 'panam vanthathu',
+      'credit aachu', 'sambalam vanthuchu', 'kaasu kedaichathu'
     ];
     const investmentKeywords = [
-      'invested', 'investment', 'sip', 'mutual fund', 'stocks', 'stock',
-      'fixed deposit', 'fd', 'rd', 'ppf', 'epf', 'nps', 'gold', 'crypto', 'shares', 'nivesh'
+      // English
+      'invested', 'investment', 'sip', 'mutual fund', 'stocks', 'stock', 'fixed deposit',
+      'fd', 'rd', 'ppf', 'epf', 'nps', 'gold', 'crypto', 'shares',
+      // Hindi / Hinglish
+      'nivesh', 'jama kiya', 'sona kharida',
+      // Tamil / Tanglish
+      'mudalieedu', 'invest pannen', 'thangam vaanginen', 'seetu', 'cheetu potten', 'pangu vaanginen'
     ];
 
     let incomeScore = 0;
@@ -88,9 +143,10 @@ function parseUtteranceRuleBased(text, taxonomy, context = {}) {
     } else if (expenseScore > 0) {
       transaction_type = 'expense';
     } else {
-      // Default to expense if unclear, but lower confidence
-      if (lowerText.includes('add') || lowerText.includes('log')) {
-        confidence -= 0.15;
+      // If amount or financial sentence is present, assume expense as default
+      if (lowerText.includes('add') || lowerText.includes('log') || extractAmount(lowerText)) {
+        transaction_type = 'expense';
+        confidence -= 0.1;
       }
     }
   }
@@ -100,17 +156,17 @@ function parseUtteranceRuleBased(text, taxonomy, context = {}) {
     amount = extractAmount(lowerText);
   }
 
-  // C. Extract Category
+  // C. Extract Category (returns NULL if not mentioned in text)
   if (!category) {
     category = extractCategory(lowerText, transaction_type || 'expense', taxonomy);
   }
 
-  // D. Extract Date
-  if (lowerText.includes('yesterday') || lowerText.includes('kal')) {
+  // D. Extract Date (English / Hindi / Tamil)
+  if (lowerText.includes('yesterday') || lowerText.includes('kal') || lowerText.includes('netru') || lowerText.includes('nethu')) {
     date = getOffsetDateFormatted(-1);
-  } else if (lowerText.includes('day before yesterday')) {
+  } else if (lowerText.includes('day before yesterday') || lowerText.includes('munnadi')) {
     date = getOffsetDateFormatted(-2);
-  } else if (lowerText.includes('tomorrow')) {
+  } else if (lowerText.includes('tomorrow') || lowerText.includes('naalai') || lowerText.includes('naalaiki')) {
     date = getOffsetDateFormatted(1);
   } else {
     // Check YYYY-MM-DD pattern
@@ -123,7 +179,7 @@ function parseUtteranceRuleBased(text, taxonomy, context = {}) {
   // E. Identify Missing Fields & Ambiguity
   if (!transaction_type) {
     missing_fields.push('transaction_type');
-    confidence -= 0.3;
+    confidence -= 0.25;
   }
   if (!amount || isNaN(amount) || amount <= 0) {
     missing_fields.push('amount');
@@ -133,10 +189,9 @@ function parseUtteranceRuleBased(text, taxonomy, context = {}) {
   if (!category) {
     missing_fields.push('category');
     confidence -= 0.2;
-    category = transaction_type ? (taxonomy[transaction_type]?.[0] || 'Other') : 'Other';
+    category = null; // Do NOT falsely set to Groceries!
   }
 
-  // Clamp confidence score between 0.10 and 0.99
   confidence = Math.max(0.10, Math.min(0.99, parseFloat(confidence.toFixed(2))));
 
   return {
@@ -152,22 +207,28 @@ function parseUtteranceRuleBased(text, taxonomy, context = {}) {
 }
 
 /**
- * Extract numerical amount from Indian financial phrases (e.g. ₹500, 500 rs, 5k, 20 hazar, 1.5 lakh)
+ * Extract numerical amount from Indian phrases (English, Hindi, Hinglish, Tamil, Tanglish)
  */
 function extractAmount(text) {
-  // 1. Direct Regex for Currency prefix/suffix (e.g. ₹500, Rs. 500, 500 rupees, 500 INR, 500.50)
-  const currencyMatch = text.match(/(?:(?:rs\.?|inr|₹|rupees?|rs)\s*)?(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:rs\.?|inr|rupees?|bucks)?/i);
-  
-  // 2. Handle 5k, 10k, 2.5k
-  const kMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:k|thousand|hazar)\b/i);
+  // 1. Direct Currency Match: ₹500, Rs. 500, 500 rupees, 500 rooba, 500 roobai, 500 inr, 500 rupay
+  const currencyMatch = text.match(/(?:(?:rs\.?|inr|₹|rupees?|rooba|roobai|rupaye?|kaasu|panam)\s*)?(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:rs\.?|inr|rupees?|rooba|roobai|rupaye?|bucks)?/i);
+
+  // 2. Handle Thousands / k (5k, 10k, 2.5k, 20 hazar, 5 aayiram)
+  const kMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:k|thousand|hazar|aayiram|ayiram)\b/i);
   if (kMatch) {
     return parseFloat(kMatch[1]) * 1000;
   }
 
-  // 3. Handle Lakhs (e.g. 1.5 lakh, 2 lacs)
-  const lakhMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:lakh|lacs?|lac)\b/i);
+  // 3. Handle Lakhs (1.5 lakh, 2 lacs, 1 latcham)
+  const lakhMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:lakh|lacs?|lac|latcham)\b/i);
   if (lakhMatch) {
     return parseFloat(lakhMatch[1]) * 100000;
+  }
+
+  // 4. Handle Crores / Kodi (1 crore, 2 kodi)
+  const croreMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:crore|cr|kodi)\b/i);
+  if (croreMatch) {
+    return parseFloat(croreMatch[1]) * 10000000;
   }
 
   if (currencyMatch && currencyMatch[1]) {
@@ -176,7 +237,16 @@ function extractAmount(text) {
     if (!isNaN(val) && val > 0) return val;
   }
 
-  // 4. Word to number fallback (e.g. "five hundred", "300")
+  // 5. Named Number Words (Tamil, Hindi, English)
+  const wordTokens = text.split(/\s+/);
+  for (const token of wordTokens) {
+    const cleaned = token.replace(/[^a-z0-9]/gi, '').toLowerCase();
+    if (NUMBER_WORDS[cleaned] !== undefined && NUMBER_WORDS[cleaned] > 0) {
+      return NUMBER_WORDS[cleaned];
+    }
+  }
+
+  // 6. Generic Number Fallback
   const numMatch = text.match(/\b(\d+)\b/);
   if (numMatch) {
     return parseFloat(numMatch[1]);
@@ -186,7 +256,8 @@ function extractAmount(text) {
 }
 
 /**
- * Extract Category based on Taxonomies and Indian Synonyms
+ * Extract Category based on Taxonomies and Synonyms across Languages
+ * Returns NULL if no category is mentioned in text (prevents false Groceries default)
  */
 function extractCategory(text, type, taxonomy) {
   const availableCategories = taxonomy[type] || CATEGORY_TAXONOMY[type] || [];
@@ -199,7 +270,7 @@ function extractCategory(text, type, taxonomy) {
     }
   }
 
-  // Check synonym match
+  // Check synonym match for this transaction type
   for (const [catName, synonyms] of Object.entries(typeSynonyms)) {
     if (availableCategories.includes(catName)) {
       if (synonyms.some(syn => text.includes(syn))) {
@@ -208,7 +279,7 @@ function extractCategory(text, type, taxonomy) {
     }
   }
 
-  // Global search across all categories if type was misclassified
+  // Global search across all categories if type was ambiguous
   for (const [t, catMap] of Object.entries(CATEGORY_SYNONYMS)) {
     for (const [catName, synonyms] of Object.entries(catMap)) {
       if (synonyms.some(syn => text.includes(syn))) {
@@ -217,15 +288,16 @@ function extractCategory(text, type, taxonomy) {
     }
   }
 
-  return availableCategories[0] || 'Other';
+  // DO NOT default to Groceries! Return null so caller asks clarification.
+  return null;
 }
 
 /**
- * Optional LLM parser implementation if API keys are set
+ * Multi-lingual LLM parser implementation if API keys are configured
  */
 async function parseUtteranceWithLLM(text, taxonomy, context) {
   const prompt = `
-You are a Voice Transaction Classifier for a personal finance application.
+You are a Multi-Lingual Voice Transaction Classifier supporting English, Tamil, Tanglish, Hindi, and Hinglish.
 Parse the following voice utterance into a JSON object matching this schema:
 
 Schema:
@@ -233,23 +305,23 @@ Schema:
   "transaction_type": "income" | "expense" | "investment",
   "amount": number,
   "currency": "INR",
-  "category": string,
+  "category": string, // One from taxonomy or null if not mentioned
   "date": "YYYY-MM-DD",
   "notes": string,
   "confidence": number, // 0.0 to 1.0
-  "missing_fields": string[] // e.g. ["amount", "category"] if ambiguous or omitted
+  "missing_fields": string[] // e.g. ["amount", "category"]
 }
 
-Taxonomy per type:
+Taxonomy:
 - Income: ${taxonomy.income.join(', ')}
 - Expense: ${taxonomy.expense.join(', ')}
 - Investment: ${taxonomy.investment.join(', ')}
 
 Today's Date: ${getTodayFormatted()}
 Context from previous turn: ${JSON.stringify(context)}
-User Utterance: "${text}"
+User Utterance (may be English, Tamil, Tanglish, Hindi, or Hinglish): "${text}"
 
-Respond strictly with valid JSON only. No markdown ticks, no commentary.
+Respond strictly with valid JSON only.
 `;
 
   if (process.env.OPENAI_API_KEY) {
@@ -257,7 +329,7 @@ Respond strictly with valid JSON only. No markdown ticks, no commentary.
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
@@ -284,3 +356,4 @@ function getOffsetDateFormatted(offsetDays) {
   d.setDate(d.getDate() + offsetDays);
   return d.toISOString().split('T')[0];
 }
+

@@ -85,6 +85,48 @@ document.addEventListener('DOMContentLoaded', () => {
   let visualizerAnimFrame = null;
   const currentUserId = 'user_' + Math.random().toString(36).substr(2, 6);
 
+  // Voice Language Mode (cycling through all supported modes)
+  const LANG_MODES = [
+    { id: 'en-IN',   label: 'English (India)',       ttsLang: 'en-IN' },
+    { id: 'ta-IN',   label: 'Tamil',                  ttsLang: 'ta-IN' },
+    { id: 'hi-IN',   label: 'Hindi',                  ttsLang: 'hi-IN' },
+    { id: 'en-ta',   label: 'English + Tamil',         ttsLang: 'en-IN' },
+    { id: 'hi-en',   label: 'Hindi + English',         ttsLang: 'hi-IN' },
+  ];
+  let currentLangIdx = 0;
+
+  // Proactive conversation context (remembers partial category)
+  let proactiveContext = null; // { category, type }
+
+  // Preferred male TTS voice (set once voices load)
+  let preferredTTSVoice = null;
+  function loadPreferredVoice() {
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices || voices.length === 0) return;
+    // Priority: Male Indian English → Male Hindi → Any Google male → first en-IN → first
+    const maleMatchers = [
+      v => v.name.toLowerCase().includes('rishi'),           // Chrome Indian male
+      v => v.name.toLowerCase().includes('deepak'),
+      v => v.name.toLowerCase().includes('hemant'),
+      v => v.name.toLowerCase().includes('karthik'),
+      v => v.lang === 'en-IN' && v.name.toLowerCase().includes('male'),
+      v => v.name.toLowerCase().includes('google uk english male'),
+      v => v.name.toLowerCase().includes('google') && v.lang.startsWith('en'),
+      v => v.lang === 'en-IN',
+      v => v.lang.startsWith('en'),
+    ];
+    for (const matcher of maleMatchers) {
+      const found = voices.find(matcher);
+      if (found) { preferredTTSVoice = found; break; }
+    }
+    if (!preferredTTSVoice) preferredTTSVoice = voices[0];
+    console.log('🎙️ TTS Voice selected:', preferredTTSVoice?.name);
+  }
+  if (window.speechSynthesis) {
+    window.speechSynthesis.onvoiceschanged = loadPreferredVoice;
+    loadPreferredVoice();
+  }
+
   // -------------------------------------------------------------
   // 1. SECURITY AUTHENTICATION GATE (Username: admin, Password: GODADDYLIVE)
   // -------------------------------------------------------------
@@ -255,10 +297,14 @@ document.addEventListener('DOMContentLoaded', () => {
       streamRoomVal.textContent = roomName;
       streamParticipantVal.textContent = currentUserId;
 
-      setAssistantState('listening', 'Voice Engine connected! Speak any transaction or instruction now (e.g. "Spent 500 on groceries" or "What are my expenses?").');
+      setAssistantState('listening', 'Voice Engine connected! Speak any transaction now — e.g. "Spent 500 on groceries" or "What are my expenses?"');
 
-      speakAssistantResponse("I'm listening. You can tell me to log an expense, update a transaction, or give you a spending summary.");
-      startListeningTurn();
+      // Proactive greeting — immediately speak and then listen, no gap
+      speakAssistantResponse(
+        "Hey! I'm your finance assistant. What did you spend money on today? Just say something like — groceries, food, auto, or petrol.",
+        () => { startListeningTurn(); }
+      );
+      // Do NOT call startListeningTurn here — it's called in the callback above
 
     } catch (error) {
       console.error('Failed to start voice session:', error);
@@ -397,17 +443,38 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Web Speech Recognition
+  // --- Language Mode Selector UI (injected dynamically) ---
+  function buildLangSwitcher() {
+    const bar = document.querySelector('.voice-action-bar');
+    if (!bar || document.getElementById('lang-mode-btn')) return;
+    const btn = document.createElement('button');
+    btn.id = 'lang-mode-btn';
+    btn.className = 'btn btn-xs btn-outline';
+    btn.title = 'Switch voice language';
+    btn.style.cssText = 'margin-left:8px; font-size:12px; padding:4px 10px;';
+    btn.textContent = '🌐 ' + LANG_MODES[currentLangIdx].label;
+    btn.addEventListener('click', () => {
+      currentLangIdx = (currentLangIdx + 1) % LANG_MODES.length;
+      const mode = LANG_MODES[currentLangIdx];
+      btn.textContent = '🌐 ' + mode.label;
+      if (speechRecognizer) speechRecognizer.lang = mode.id === 'en-ta' ? 'ta-IN' : (mode.id === 'hi-en' ? 'hi-IN' : mode.id);
+      speakAssistantResponse('Language switched to ' + mode.label, null);
+    });
+    bar.appendChild(btn);
+  }
+
+  // Web Speech Recognition — Multi-Language
   function initSpeechRecognition() {
     if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
       const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
       speechRecognizer = new SpeechRec();
       speechRecognizer.continuous = false;
       speechRecognizer.interimResults = false;
-      speechRecognizer.lang = 'en-IN';
+      speechRecognizer.lang = 'en-IN'; // default; changes when user switches language
 
       speechRecognizer.onstart = () => {
         isRecognizing = true;
+        setAssistantState('listening', 'Listening... speak now.');
       };
 
       speechRecognizer.onresult = (event) => {
@@ -421,16 +488,18 @@ document.addEventListener('DOMContentLoaded', () => {
         console.warn('Speech recognition warning:', err.error);
         isRecognizing = false;
         if (isCallActive && !isMuted) {
-          setTimeout(startListeningTurn, 800);
+          setTimeout(startListeningTurn, 600);
         }
       };
 
       speechRecognizer.onend = () => {
         isRecognizing = false;
-        if (isCallActive && !isMuted && !speechSynthesis.speaking) {
-          setTimeout(startListeningTurn, 1000);
+        if (isCallActive && !isMuted && !window.speechSynthesis.speaking) {
+          setTimeout(startListeningTurn, 400); // minimal gap between turns
         }
       };
+
+      buildLangSwitcher();
     }
   }
 
@@ -471,19 +540,86 @@ document.addEventListener('DOMContentLoaded', () => {
     dialogCountBadge.textContent = '0 Turns';
   });
 
+  // --- Proactive Category Detection (before API call) ---
+  const CATEGORY_TRIGGERS = [
+    { words: ['grocery','groceries','sabzi','kirana','maligai','kaaikari','blinkit','zepto','d-mart','dmart','vegetables','veggies'], cat: 'Groceries', type: 'expense' },
+    { words: ['food','lunch','dinner','breakfast','zomato','swiggy','restaurant','hotel','biryani','pizza','khana','saapadu','tiffin'], cat: 'Food & Dining', type: 'expense' },
+    { words: ['auto','cab','uber','ola','rapido','metro','bus','petrol','diesel','fuel','train','ticket','vandi'], cat: 'Transport', type: 'expense' },
+    { words: ['electricity','current bill','eb bill','power bill','water bill','wifi','internet','gas','cylinder'], cat: 'Utilities', type: 'expense' },
+    { words: ['rent','vaadagai','kiraya','house rent'], cat: 'Rent', type: 'expense' },
+    { words: ['movie','cinema','netflix','prime','hotstar','ott','padam','show'], cat: 'Entertainment', type: 'expense' },
+    { words: ['doctor','hospital','medicine','marunthu','pharmacy','dawa'], cat: 'Healthcare', type: 'expense' },
+    { words: ['shopping','amazon','flipkart','myntra','clothes','thuni','mall'], cat: 'Shopping', type: 'expense' },
+    { words: ['salary','sambalam','tankhwah'], cat: 'Salary', type: 'income' },
+    { words: ['sip','mutual fund','mf','fd','fixed deposit','gold','stocks','shares','invest'], cat: 'Mutual Fund SIP', type: 'investment' },
+  ];
+
+  function detectCategoryFromText(text) {
+    const lower = text.toLowerCase();
+    for (const trigger of CATEGORY_TRIGGERS) {
+      if (trigger.words.some(w => lower.includes(w))) {
+        return { category: trigger.cat, type: trigger.type };
+      }
+    }
+    return null;
+  }
+
+  function detectAmountFromText(text) {
+    const m = text.match(/(\d+(?:[.,]\d+)?)\s*(?:k|thousand|hazar|lakh|latcham|ayiram)?/i);
+    return m ? parseFloat(m[1].replace(',', '')) : null;
+  }
+
   // Conversational Turn Processor (NLU + RAG + Firestore CRUD)
   async function processConversationalTurn(userText) {
     if (!userText || userText.trim() === '') return;
 
     appendDialogMessage('user', userText);
-    setAssistantState('thinking', `Processing: "${userText}" with NLU & RAG...`);
+    setAssistantState('thinking', '⚡ Processing your request...');
+
+    // -- PROACTIVE FLOW: If user only said a category word with no amount --
+    const detected = detectCategoryFromText(userText);
+    const detectedAmt = detectAmountFromText(userText);
+
+    if (detected && !detectedAmt && !proactiveContext) {
+      // User said "groceries" or "sabzi" with no amount — ask proactively!
+      proactiveContext = detected;
+      const followUp = `How much did you spend for ${detected.category}?`;
+      appendDialogMessage('agent', followUp, null);
+      clarificationBanner.classList.remove('hidden');
+      clarificationMsg.textContent = followUp;
+      setAssistantState('speaking', followUp);
+      speakAssistantResponse(followUp, () => {
+        if (isCallActive && !isMuted) {
+          setAssistantState('listening', `Waiting for amount for ${detected.category}...`);
+          startListeningTurn();
+        }
+      });
+      return;
+    }
+
+    // -- If proactiveContext is set and now user gave amount, merge --
+    let finalText = userText;
+    if (proactiveContext && detectedAmt) {
+      finalText = `Spent ${userText} on ${proactiveContext.category}`;
+      proactiveContext = null;
+      clarificationBanner.classList.add('hidden');
+    } else if (proactiveContext && !detectedAmt) {
+      // Still no amount, keep asking
+      const followUp = `I didn't catch the amount. How much did you spend for ${proactiveContext.category}?`;
+      appendDialogMessage('agent', followUp, null);
+      speakAssistantResponse(followUp, () => startListeningTurn());
+      return;
+    } else {
+      proactiveContext = null;
+      clarificationBanner.classList.add('hidden');
+    }
 
     try {
       const response = await fetch('/api/voice/agent/conversation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          text: userText,
+          text: finalText,
           userId: currentUserId
         })
       });
@@ -501,6 +637,14 @@ document.addEventListener('DOMContentLoaded', () => {
         clarificationMsg.textContent = data.follow_up_question;
       } else {
         clarificationBanner.classList.add('hidden');
+      }
+
+      // Proactively handle clarification_needed from backend too
+      if (data.action_performed === 'clarification_needed' && data.parsedData) {
+        const cat = data.parsedData.category;
+        if (cat && cat !== 'Other') {
+          proactiveContext = { category: cat, type: data.parsedData.transaction_type || 'expense' };
+        }
       }
 
       const reply = data.spokenResponse || data.confirmation_spoken || 'Transaction processed successfully.';
@@ -523,7 +667,7 @@ document.addEventListener('DOMContentLoaded', () => {
       setAssistantState('speaking', reply);
       speakAssistantResponse(reply, () => {
         if (isCallActive && !isMuted) {
-          setAssistantState('listening', 'Listening for your next voice command...');
+          setAssistantState('listening', 'Listening for your next command...');
           startListeningTurn();
         } else {
           setAssistantState('idle', 'Ready for next voice or text input.');
@@ -571,34 +715,59 @@ document.addEventListener('DOMContentLoaded', () => {
     dialogFeed.scrollTop = dialogFeed.scrollHeight;
   }
 
-  // Text-To-Speech Synthesis
+  // Text-To-Speech Synthesis — Male Voice, Multi-Lang, High Speed
   function speakAssistantResponse(text, onEndCallback) {
-    if (!ttsAudioToggle.checked) {
+    if (!ttsAudioToggle || !ttsAudioToggle.checked) {
+      if (onEndCallback) onEndCallback();
+      return;
+    }
+    if (!('speechSynthesis' in window)) {
       if (onEndCallback) onEndCallback();
       return;
     }
 
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
+    // Cancel any ongoing speech immediately
+    window.speechSynthesis.cancel();
 
-      const voices = window.speechSynthesis.getVoices();
-      const preferredVoice = voices.find(v => v.lang.includes('en-IN') || v.name.includes('Google') || v.name.includes('Natural')) || voices[0];
-      if (preferredVoice) utterance.voice = preferredVoice;
+    const utterance = new SpeechSynthesisUtterance(text);
 
-      utterance.onend = () => {
-        if (onEndCallback) onEndCallback();
-      };
-      utterance.onerror = () => {
-        if (onEndCallback) onEndCallback();
-      };
+    // Speed: 1.35 is fast & clear, feels natural and professional
+    utterance.rate  = 1.35;
+    utterance.pitch = 0.88;  // Slightly lower pitch = more masculine, deeper voice
+    utterance.volume = 1.0;
 
-      window.speechSynthesis.speak(utterance);
+    // Set TTS language based on selected mode
+    const mode = LANG_MODES[currentLangIdx];
+    utterance.lang = mode.ttsLang;
+
+    // Assign best available voice
+    if (preferredTTSVoice) {
+      utterance.voice = preferredTTSVoice;
     } else {
-      if (onEndCallback) onEndCallback();
+      // Lazy-load voices and retry
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        loadPreferredVoice();
+        if (preferredTTSVoice) utterance.voice = preferredTTSVoice;
+      }
     }
+
+    utterance.onend = () => { if (onEndCallback) onEndCallback(); };
+    utterance.onerror = (e) => {
+      console.warn('TTS error:', e.error);
+      if (onEndCallback) onEndCallback();
+    };
+
+    window.speechSynthesis.speak(utterance);
+
+    // Workaround: Chrome sometimes pauses long utterances — keep it alive
+    const keepAlive = setInterval(() => {
+      if (!window.speechSynthesis.speaking) { clearInterval(keepAlive); return; }
+      window.speechSynthesis.pause();
+      window.speechSynthesis.resume();
+    }, 10000);
+    utterance.onend = () => { clearInterval(keepAlive); if (onEndCallback) onEndCallback(); };
+    utterance.onerror = (e) => { clearInterval(keepAlive); console.warn('TTS error:', e.error); if (onEndCallback) onEndCallback(); };
   }
 
   // Load Transactions from Backend

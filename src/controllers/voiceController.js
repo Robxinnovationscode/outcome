@@ -555,21 +555,23 @@ export async function getDiag(req, res) {
 function generateConfirmationText(data) {
   const typeStr = (data.transaction_type || 'expense').toUpperCase();
   const amtStr = `₹${data.amount}`;
-  const catStr = data.category || 'Other';
-  return `Got it! Recorded ${typeStr} of ${amtStr} for ${catStr} on ${data.date || 'today'}.`;
+  const catStr = data.category || 'General';
+  return `Got it! Recorded ${typeStr} of ${amtStr} for ${catStr}.`;
 }
 
 function generateFollowUpQuestion(data) {
   const missing = data.missing_fields || [];
   if (missing.includes('amount') && missing.includes('category')) {
-    return `Sure! How much was the transaction, and what category was it for?`;
+    return `Sure! How much did you spend, and what was it for?`;
   }
   if (missing.includes('amount')) {
-    return `How much was spent for ${data.category || 'this transaction'}?`;
+    const catName = (data.category && data.category !== 'Other' && data.category !== 'General') ? `for ${data.category}` : '';
+    return `How much was spent${catName ? ' ' + catName : ''}?`;
   }
   if (missing.includes('category')) {
     return `Got ₹${data.amount}. What category should I log this under?`;
   }
   return `Could you please clarify the details of this transaction?`;
 }
+
 
