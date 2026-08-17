@@ -5,6 +5,7 @@ import { executeFirestoreCRUD, fetchAllTransactions } from '../services/firestor
 import { createParticipantToken, getLiveKitUrl } from '../services/livekitTokenService.js';
 import { CATEGORY_TAXONOMY, DEFAULT_CONFIDENCE_THRESHOLD } from '../config/constants.js';
 import { ingestTextForRag, queryRag, summarizeFullHistory, callLLM } from '../services/ragService.js';
+import { detectLanguage, generateLocalizedSpokenResponse, generateLocalizedFollowUp } from '../services/languageService.js';
 
 /**
  * Controller 1: Process Audio Input (Multipart file or Base64 string)
@@ -380,13 +381,15 @@ export async function conversationalAgent(req, res) {
       return res.status(400).json({ success: false, error: 'text is required' });
     }
 
+    // Auto-detect language (Tamil, Hindi, English, or mixed)
+    const detectedLang = req.body.language || detectLanguage(text);
     const lower = text.toLowerCase().trim();
 
     // Detect User Intent: DELETE, UPDATE, QUERY/READ, RAG_SUMMARY, or CREATE
-    const isDelete = /\b(delete|remove|cancel|discard|erase|hatao|mitado)\b/i.test(lower);
-    const isUpdate = /\b(update|change|modify|correct|badlo|set)\b/i.test(lower);
-    const isQuery = /\b(what|how much|total|show|list|summary|spending|expenses|tell me|kitna|dekhao|kya)\b/i.test(lower);
-    const isSummary = /\b(summary|overview|health|report|analysis|advice)\b/i.test(lower);
+    const isDelete = /\b(delete|remove|cancel|discard|erase|hatao|mitado|azhi|azhithuvidu|vendaam)\b/i.test(lower);
+    const isUpdate = /\b(update|change|modify|correct|badlo|set|maathu|maathividu)\b/i.test(lower);
+    const isQuery = /\b(what|how much|total|show|list|summary|spending|expenses|tell me|kitna|dekhao|kya|evvalavu|evlo|sollinga|kaatu)\b/i.test(lower);
+    const isSummary = /\b(summary|overview|health|report|analysis|advice|motham|mothatham)\b/i.test(lower);
 
     let action_performed = 'create';
     let spokenResponse = '';
@@ -399,25 +402,25 @@ export async function conversationalAgent(req, res) {
       action_performed = 'delete';
       parsedData = await parseUtterance(text, {});
       dbResult = await executeFirestoreCRUD('delete', parsedData, userId);
-      if (dbResult.success) {
-        spokenResponse = `Deleted your most recent ${parsedData.category !== 'Other' ? parsedData.category : parsedData.transaction_type} transaction.`;
-      } else {
-        spokenResponse = dbResult.error || `Could not find any transaction to delete.`;
-      }
+      spokenResponse = generateLocalizedSpokenResponse({
+        action: 'delete',
+        parsedData,
+        lang: detectedLang
+      });
     }
     // 2. Intent: UPDATE
     else if (isUpdate) {
       action_performed = 'update';
       parsedData = await parseUtterance(text, {});
       dbResult = await executeFirestoreCRUD('update', parsedData, userId);
-      if (dbResult.success) {
-        spokenResponse = `Updated your ${parsedData.category} transaction to ₹${parsedData.amount}.`;
-      } else {
-        spokenResponse = dbResult.error || `Could not find transaction to update.`;
-      }
+      spokenResponse = generateLocalizedSpokenResponse({
+        action: 'update',
+        parsedData,
+        lang: detectedLang
+      });
     }
     // 3. Intent: QUERY / RAG SUMMARY
-    else if (isSummary || (isQuery && !/\b(spent|paid|bought|received|credited|invested)\b/i.test(lower))) {
+    else if (isSummary || (isQuery && !/\b(spent|paid|bought|received|credited|invested|kuduthen|vanginen|diya|mila)\b/i.test(lower))) {
       action_performed = 'query';
       const allTx = await fetchAllTransactions(userId);
       const totalExp = allTx.filter(t => t.transaction_type === 'expense').reduce((acc, t) => acc + (t.amount || 0), 0);
@@ -430,24 +433,29 @@ export async function conversationalAgent(req, res) {
         // ignore
       }
 
-      if (isSummary) {
-        spokenResponse = `Here is your financial summary: You have ₹${totalInc.toLocaleString('en-IN')} income, ₹${totalExp.toLocaleString('en-IN')} expenses, and ₹${totalInv.toLocaleString('en-IN')} investments.`;
-      } else {
-        spokenResponse = `You have ${allTx.length} total records logged. Total expenses are ₹${totalExp.toLocaleString('en-IN')} and income is ₹${totalInc.toLocaleString('en-IN')}.`;
-      }
+      spokenResponse = generateLocalizedSpokenResponse({
+        action: 'query',
+        parsedData: {},
+        lang: detectedLang,
+        totalExp,
+        totalInc,
+        totalInv,
+        allCount: allTx.length
+      });
     }
     // 4. Intent: CREATE (Default financial transaction parsing & logging)
     else {
       action_performed = 'create';
       parsedData = await parseUtterance(text, {});
 
-      // Missing critical fields -> Ask clarification
+      // Missing critical fields -> Ask clarification in detected language
       if (parsedData.missing_fields && parsedData.missing_fields.length > 0) {
-        const followUp = generateFollowUpQuestion(parsedData);
+        const followUp = generateLocalizedFollowUp(parsedData, detectedLang);
         return res.status(200).json({
           success: true,
           action_performed: 'clarification_needed',
           requires_clarification: true,
+          detected_language: detectedLang,
           missing_fields: parsedData.missing_fields,
           spokenResponse: followUp,
           follow_up_question: followUp,
@@ -456,13 +464,13 @@ export async function conversationalAgent(req, res) {
       }
 
       // Guard: if NLU couldn't reliably parse key fields, ask for clarification
-      // rather than silently logging a garbage "Other / ₹0" record.
       if (!parsedData.amount || parsedData.amount <= 0 || !parsedData.category || parsedData.category === 'Other') {
-        const followUp = generateFollowUpQuestion(parsedData);
+        const followUp = generateLocalizedFollowUp(parsedData, detectedLang);
         return res.status(200).json({
           success: true,
           action_performed: 'clarification_needed',
           requires_clarification: true,
+          detected_language: detectedLang,
           missing_fields: parsedData.missing_fields,
           spokenResponse: followUp,
           follow_up_question: followUp,
@@ -483,7 +491,11 @@ export async function conversationalAgent(req, res) {
         // ignore
       }
 
-      spokenResponse = `Got it! Recorded ${parsedData.transaction_type.toUpperCase()} of ₹${parsedData.amount} for ${parsedData.category} on ${parsedData.date}.`;
+      spokenResponse = generateLocalizedSpokenResponse({
+        action: 'create',
+        parsedData,
+        lang: detectedLang
+      });
     }
 
     // Refresh all transactions list
@@ -492,6 +504,7 @@ export async function conversationalAgent(req, res) {
     return res.status(200).json({
       success: true,
       action_performed,
+      detected_language: detectedLang,
       spokenResponse,
       confirmation_spoken: spokenResponse,
       parsedData,
@@ -590,26 +603,12 @@ export async function getDiag(req, res) {
 }
 
 // Helpers
-function generateConfirmationText(data) {
-  const typeStr = (data.transaction_type || 'expense').toUpperCase();
-  const amtStr = `₹${data.amount}`;
-  const catStr = data.category || 'General';
-  return `Got it! Recorded ${typeStr} of ${amtStr} for ${catStr}.`;
+function generateConfirmationText(data, lang = 'en-IN') {
+  return generateLocalizedSpokenResponse({ action: 'create', parsedData: data, lang });
 }
 
-function generateFollowUpQuestion(data) {
-  const missing = data.missing_fields || [];
-  if (missing.includes('amount') && missing.includes('category')) {
-    return `Sure! How much did you spend, and what was it for?`;
-  }
-  if (missing.includes('amount')) {
-    const catName = (data.category && data.category !== 'Other' && data.category !== 'General') ? `for ${data.category}` : '';
-    return `How much was spent${catName ? ' ' + catName : ''}?`;
-  }
-  if (missing.includes('category')) {
-    return `Got ₹${data.amount}. What category should I log this under?`;
-  }
-  return `Could you please clarify the details of this transaction?`;
+function generateFollowUpQuestion(data, lang = 'en-IN') {
+  return generateLocalizedFollowUp(data, lang);
 }
 
 

@@ -140,18 +140,25 @@ document.addEventListener('DOMContentLoaded', () => {
     const voices = window.speechSynthesis.getVoices();
     if (!voices || voices.length === 0) return null;
 
-    if (lang === 'ta-IN') {
+    if (lang === 'ta-IN' || lang === 'ta') {
       return (
         voices.find(v => v.lang === 'ta-IN') ||
+        voices.find(v => v.lang === 'ta_IN') ||
+        voices.find(v => v.lang.startsWith('ta')) ||
         voices.find(v => v.name.toLowerCase().includes('tamil')) ||
+        voices.find(v => v.name.toLowerCase().includes('valluvar')) ||
         voices.find(v => v.lang === 'en-IN') ||
         voices[0]
       );
     }
-    if (lang === 'hi-IN') {
+    if (lang === 'hi-IN' || lang === 'hi') {
       return (
         voices.find(v => v.lang === 'hi-IN') ||
+        voices.find(v => v.lang === 'hi_IN') ||
+        voices.find(v => v.lang.startsWith('hi')) ||
+        voices.find(v => v.name.toLowerCase().includes('hindi')) ||
         voices.find(v => v.name.toLowerCase().includes('hemant')) ||
+        voices.find(v => v.name.toLowerCase().includes('madhav')) ||
         voices.find(v => v.name.toLowerCase().includes('kalpana')) ||
         voices.find(v => v.lang === 'en-IN') ||
         voices[0]
@@ -779,8 +786,9 @@ document.addEventListener('DOMContentLoaded', () => {
         ragContextBox.innerHTML = `<strong>🧠 Vector Memory Ingested:</strong><p>Embedded: ${data.parsedData.transaction_type} of ₹${data.parsedData.amount} for ${data.parsedData.category} (${data.parsedData.date}).</p>`;
       }
 
+      const responseLang = data.detected_language || detectedLang || 'en-IN';
       setAssistantState('speaking', reply);
-      speakAssistantResponse(reply, detectedLang, () => {
+      speakAssistantResponse(reply, responseLang, () => {
         if (isCallActive && !isMuted) {
           setAssistantState('listening', 'Listening for your next command...');
           startListeningTurn();
