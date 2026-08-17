@@ -267,50 +267,92 @@ function extractCategory(text, type, taxonomy) {
  * Multi-lingual LLM parser implementation if API keys are configured
  */
 async function parseUtteranceWithLLM(text, taxonomy, context) {
-  const prompt = `
-You are a Multi-Lingual Voice Transaction Classifier supporting English, Tamil, Tanglish, Hindi, and Hinglish.
-Parse the following voice utterance into a JSON object matching this schema:
+  const prompt = `You are a Multi-Lingual Personal Finance Voice Transaction Classifier supporting English, Tamil (தமிழ்), Tanglish, Hindi (हिंदी), and Hinglish.
+Parse the following voice utterance into a strict JSON object matching this schema:
 
-Schema:
 {
   "transaction_type": "income" | "expense" | "investment",
   "amount": number,
   "currency": "INR",
-  "category": string, // One from taxonomy or null if not mentioned
+  "category": string or null,
   "date": "YYYY-MM-DD",
   "notes": string,
-  "confidence": number, // 0.0 to 1.0
-  "missing_fields": string[] // e.g. ["amount", "category"]
+  "confidence": number,
+  "missing_fields": string[]
 }
 
-Taxonomy:
+Available Taxonomy Categories:
 - Income: ${taxonomy.income.join(', ')}
 - Expense: ${taxonomy.expense.join(', ')}
 - Investment: ${taxonomy.investment.join(', ')}
 
+Rules:
+1. Category must match one of the exact category names above, or null if unidentifiable.
+2. If amount is mentioned (e.g., 500 rooba, ₹500, 500 ரூபாய், 500 rupaye), extract the numerical value.
+3. If the user said words like 'selavu', 'kharcha', 'paid', 'spent', 'kuduthen', set transaction_type to 'expense'.
+4. If missing_fields has items, list them (e.g. ["category"] or ["amount"]).
+5. Return strictly valid JSON with no markdown wrapping.
+
 Today's Date: ${getTodayFormatted()}
 Context from previous turn: ${JSON.stringify(context)}
-User Utterance (may be English, Tamil, Tanglish, Hindi, or Hinglish): "${text}"
+User Utterance: "${text}"`;
 
-Respond strictly with valid JSON only.
-`;
+  // 1. Google Gemini Flash (Native Multi-Lingual & JSON Mode)
+  const geminiKey = process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.trim() : '';
+  if (geminiKey) {
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              responseMimeType: 'application/json',
+              temperature: 0.1,
+              maxOutputTokens: 300
+            }
+          })
+        }
+      );
 
+      if (response.ok) {
+        const data = await response.json();
+        const jsonText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (jsonText) {
+          const parsed = JSON.parse(jsonText);
+          if (parsed && typeof parsed === 'object') {
+            return parsed;
+          }
+        }
+      }
+    } catch (gErr) {
+      console.warn('⚠️ Gemini NLU parse failed:', gErr.message);
+    }
+  }
+
+  // 2. OpenAI GPT-4o-mini
   if (process.env.OPENAI_API_KEY) {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'system', content: prompt }],
-        response_format: { type: 'json_object' }
-      })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      return JSON.parse(data.choices[0].message.content);
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'system', content: prompt }],
+          response_format: { type: 'json_object' }
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return JSON.parse(data.choices[0].message.content);
+      }
+    } catch (oErr) {
+      console.warn('⚠️ OpenAI NLU parse failed:', oErr.message);
     }
   }
 
