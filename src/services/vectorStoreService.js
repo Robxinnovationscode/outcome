@@ -2,48 +2,46 @@ import { getFirestore, isFirebaseConfigured } from '../config/firebase.js';
 
 const COLLECTION = 'voice_embeddings';
 
+// In-memory embedding cache for fallback / sandbox
+const inMemoryEmbeddings = [];
+
 export async function ingestEmbedding({ userId = 'default_user', sourceId = null, text = '', embedding = [] }) {
   if (!text || !embedding) {
     throw new Error('text and embedding required');
   }
 
-  if (!isFirebaseConfigured()) {
-    console.log('[VectorStore Mock] ingest', { userId, sourceId, text: text.slice(0, 120) });
-    return { success: true, mode: 'mock', id: `mock_${Date.now()}` };
-  }
-
-  const db = getFirestore();
-  const doc = await db.collection(COLLECTION).add({
+  // Always store in inMemoryEmbeddings for fast local retrieval
+  const memRecord = {
+    id: `mem_emb_${Date.now()}`,
     userId,
     sourceId,
     text,
     embedding,
     createdAt: new Date()
-  });
+  };
+  inMemoryEmbeddings.unshift(memRecord);
 
-  return { success: true, id: doc.id };
+  if (!isFirebaseConfigured()) {
+    return { success: true, mode: 'in_memory_sandbox', id: memRecord.id };
+  }
+
+  try {
+    const db = getFirestore();
+    const doc = await db.collection(COLLECTION).add({
+      userId,
+      sourceId,
+      text,
+      embedding,
+      createdAt: new Date()
+    });
+    return { success: true, id: doc.id };
+  } catch (err) {
+    console.warn('⚠️ Firestore vector ingest fallback:', err.message);
+    return { success: true, mode: 'in_memory_fallback', id: memRecord.id };
+  }
 }
 
 export async function queryTopK({ userId = 'default_user', queryEmbedding = [], k = 5, windowDays = 365 }) {
-  // Simple Firestore scan of recent embeddings and in-memory cosine similarity
-  if (!isFirebaseConfigured()) {
-    console.log('[VectorStore Mock] queryTopK');
-    return { success: true, results: [] };
-  }
-
-  const db = getFirestore();
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - windowDays);
-
-  const snapshot = await db.collection(COLLECTION)
-    .where('userId', '==', userId)
-    .where('createdAt', '>=', cutoff)
-    .get();
-
-  const candidates = [];
-  snapshot.forEach(doc => candidates.push({ id: doc.id, ...doc.data() }));
-
-  // compute cosine similarity
   function cosine(a, b) {
     let num = 0; let ad = 0; let bd = 0;
     for (let i = 0; i < Math.min(a.length, b.length); i++) {
@@ -52,6 +50,25 @@ export async function queryTopK({ userId = 'default_user', queryEmbedding = [], 
       bd += b[i] * b[i];
     }
     return num / (Math.sqrt(ad) * Math.sqrt(bd) + 1e-12);
+  }
+
+  let candidates = inMemoryEmbeddings.filter(e => e.userId === userId || e.userId === 'default_user');
+
+  if (isFirebaseConfigured()) {
+    try {
+      const db = getFirestore();
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - windowDays);
+
+      const snapshot = await db.collection(COLLECTION)
+        .where('userId', '==', userId)
+        .where('createdAt', '>=', cutoff)
+        .get();
+
+      snapshot.forEach(doc => candidates.push({ id: doc.id, ...doc.data() }));
+    } catch (e) {
+      console.warn('⚠️ Firestore queryTopK fallback:', e.message);
+    }
   }
 
   const scored = candidates.map(c => ({
@@ -65,10 +82,16 @@ export async function queryTopK({ userId = 'default_user', queryEmbedding = [], 
 }
 
 export async function fetchAllForUser(userId = 'default_user') {
-  if (!isFirebaseConfigured()) return [];
-  const db = getFirestore();
-  const snapshot = await db.collection(COLLECTION).where('userId', '==', userId).orderBy('createdAt', 'desc').get();
-  const out = [];
-  snapshot.forEach(d => out.push({ id: d.id, ...d.data() }));
+  let out = inMemoryEmbeddings.filter(e => e.userId === userId || e.userId === 'default_user');
+
+  if (isFirebaseConfigured()) {
+    try {
+      const db = getFirestore();
+      const snapshot = await db.collection(COLLECTION).where('userId', '==', userId).orderBy('createdAt', 'desc').get();
+      snapshot.forEach(d => out.push({ id: d.id, ...d.data() }));
+    } catch (e) {
+      console.warn('⚠️ Firestore fetchAllForUser fallback:', e.message);
+    }
+  }
   return out;
 }

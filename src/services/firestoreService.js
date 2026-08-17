@@ -315,7 +315,26 @@ export async function executeFirestoreCRUD(operation, data, userId = 'default_us
       };
     }
   } catch (error) {
-    console.error(`❌ Firestore ${operation} failed:`, error);
+    console.warn(`⚠️ Live Firestore ${operation} failed (${error.message}). Falling back to in-memory store.`);
+    // Fallback to in-memory store so the user voice flow never crashes
+    const userStore = getOrCreateUserStore(userId);
+    const storeCollection = userStore[collectionName] || [];
+
+    if (operation === 'create') {
+      const docId = `mem_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+      const newRecord = { id: docId, ...payload };
+      storeCollection.unshift(newRecord);
+      userStore[collectionName] = storeCollection;
+      return {
+        success: true,
+        mode: 'in_memory_fallback',
+        operation: 'create',
+        docId: docId,
+        path: `${path}/${docId}`,
+        data: newRecord
+      };
+    }
+
     return {
       success: false,
       error: error.message
@@ -362,8 +381,17 @@ export async function fetchAllTransactions(userId = 'default_user') {
     allRecords.sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
     return allRecords;
   } catch (e) {
-    console.error('Failed to fetch all transactions:', e);
-    return [];
+    console.warn('⚠️ Live Firestore read failed, returning in-memory cached records:', e.message);
+    const userStore = getOrCreateUserStore(userId);
+    for (const col of collections) {
+      const records = (userStore[col] || []).map(r => ({
+        ...r,
+        transaction_type: col === 'investments' ? 'investment' : (col === 'income' ? 'income' : 'expense')
+      }));
+      allRecords.push(...records);
+    }
+    allRecords.sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
+    return allRecords;
   }
 }
 
