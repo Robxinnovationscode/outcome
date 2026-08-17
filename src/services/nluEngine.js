@@ -300,35 +300,38 @@ User Utterance: "${text}"`;
   // 1. Google Gemini Flash (Native Multi-Lingual & JSON Mode)
   const geminiKey = process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.trim() : '';
   if (geminiKey) {
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              responseMimeType: 'application/json',
-              temperature: 0.1,
-              maxOutputTokens: 300
-            }
-          })
-        }
-      );
+    const modelsToTry = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-latest'];
+    for (const modelName of modelsToTry) {
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: {
+                responseMimeType: 'application/json',
+                temperature: 0.1,
+                maxOutputTokens: 300
+              }
+            })
+          }
+        );
 
-      if (response.ok) {
-        const data = await response.json();
-        const jsonText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-        if (jsonText) {
-          const parsed = JSON.parse(jsonText);
-          if (parsed && typeof parsed === 'object') {
-            return parsed;
+        if (response.ok) {
+          const data = await response.json();
+          const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (rawText) {
+            const parsed = extractJsonFromText(rawText);
+            if (parsed && typeof parsed === 'object') {
+              return parsed;
+            }
           }
         }
+      } catch (gErr) {
+        console.warn(`⚠️ Gemini NLU parse (${modelName}) failed:`, gErr.message);
       }
-    } catch (gErr) {
-      console.warn('⚠️ Gemini NLU parse failed:', gErr.message);
     }
   }
 
@@ -349,13 +352,34 @@ User Utterance: "${text}"`;
       });
       if (res.ok) {
         const data = await res.json();
-        return JSON.parse(data.choices[0].message.content);
+        const raw = data.choices[0].message.content;
+        return extractJsonFromText(raw);
       }
     } catch (oErr) {
       console.warn('⚠️ OpenAI NLU parse failed:', oErr.message);
     }
   }
 
+  return null;
+}
+
+function extractJsonFromText(str) {
+  if (!str) return null;
+  const cleaned = str
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch (_) {
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch (__) {}
+    }
+  }
   return null;
 }
 

@@ -103,66 +103,69 @@ export async function transcribeAudio({ file, audioBase64, language = 'en' }) {
   // 1. Google Gemini Flash Native Audio Speech-to-Text
   const geminiKey = process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.trim() : '';
   if (geminiKey) {
-    try {
-      const audioB64 = buffer.toString('base64');
+    const audioB64 = buffer.toString('base64');
+    const modelsToTry = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-latest'];
 
-      const requestBody = {
-        contents: [{
-          parts: [
-            {
-              inline_data: {
-                mime_type: mimeType,
-                data: audioB64
+    for (const modelName of modelsToTry) {
+      try {
+        const requestBody = {
+          contents: [{
+            parts: [
+              {
+                inlineData: {
+                  mimeType: mimeType,
+                  data: audioB64
+                }
+              },
+              {
+                text: 'You are an accurate multilingual speech-to-text transcriber for a personal finance assistant. The user may speak in English, Tamil (தமிழ்), Tanglish (Tamil in English alphabet, e.g. "maligaiku 350 rooba kuduthen"), Hindi (हिंदी), or Hinglish (e.g. "sabzi ke liye 250 rupaye").\n\nInstructions:\n1. Transcribe the exact words spoken by the user.\n2. If spoken in Tanglish or Tamil, write the transcript faithfully.\n3. If the audio is silent or unintelligible noise, reply ONLY with the word: SILENT.\n4. Return ONLY the transcribed text, nothing else.'
               }
-            },
-            {
-              text: 'You are an accurate multilingual speech-to-text transcriber for a personal finance assistant. The user may speak in English, Tamil (தமிழ்), Tanglish (Tamil in English alphabet, e.g. "maligaiku 350 rooba kuduthen"), Hindi (हिंदी), or Hinglish (e.g. "sabzi ke liye 250 rupaye").\n\nInstructions:\n1. Transcribe the exact words spoken by the user.\n2. If spoken in Tanglish or Tamil, write the transcript faithfully.\n3. If the audio is silent, background noise only, or completely unintelligible, reply ONLY with the word: SILENT.\n4. Return ONLY the transcribed text, nothing else.'
-            }
-          ]
-        }],
-        generationConfig: {
-          temperature: 0.0,
-          maxOutputTokens: 350
-        }
-      };
+            ]
+          }],
+          generationConfig: {
+            temperature: 0.0,
+            maxOutputTokens: 350
+          }
+        };
 
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody)
-        }
-      );
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody)
+          }
+        );
 
-      if (response.ok) {
-        const data = await response.json();
-        let transcript = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-        console.log(`🎙️ [STT Gemini Raw Output]: "${transcript}"`);
+        if (response.ok) {
+          const data = await response.json();
+          let transcript = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+          console.log(`🎙️ [STT ${modelName} Raw Output]: "${transcript}"`);
 
-        if (
-          transcript.toUpperCase() === 'SILENT' ||
-          transcript.toLowerCase().includes('silent') ||
-          transcript === '""' ||
-          transcript === "''" ||
-          transcript === '.'
-        ) {
-          transcript = '';
-        }
+          if (
+            transcript.toUpperCase() === 'SILENT' ||
+            transcript.toLowerCase().includes('silent') ||
+            transcript === '""' ||
+            transcript === "''" ||
+            transcript === '.'
+          ) {
+            transcript = '';
+          }
 
-        if (transcript) {
-          return {
-            transcript,
-            confidence: 0.95,
-            stt_provider: 'gemini_flash_native_audio'
-          };
+          if (transcript) {
+            return {
+              transcript,
+              confidence: 0.95,
+              stt_provider: `gemini_${modelName}`
+            };
+          }
+        } else {
+          const errData = await response.text();
+          console.warn(`⚠️ Gemini STT (${modelName}) status ${response.status}:`, errData);
         }
-      } else {
-        const errData = await response.text();
-        console.warn('⚠️ Gemini STT status not ok:', response.status, errData);
+      } catch (err) {
+        console.warn(`⚠️ Gemini STT (${modelName}) exception:`, err.message);
       }
-    } catch (err) {
-      console.warn('⚠️ Gemini STT exception:', err.message);
     }
   }
 
