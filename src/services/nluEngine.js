@@ -3,35 +3,6 @@ import { CATEGORY_TAXONOMY, CATEGORY_SYNONYMS, NUMBER_WORDS, DEFAULT_CONFIDENCE_
 /**
  * Parse transcript text into structured transaction object conforming to Section 3.2 schema.
  *
- * @param {string} transcript - Natural language transcript string
- * @param {Object} options - Configuration and session context
- * @param {Object} options.customTaxonomy - Optional custom category taxonomy overriding default
- * @param {Object} options.sessionContext - Context from multi-turn conversation
- * @returns {Promise<Object>} Structured JSON schema output
- */
-export async function parseUtterance(transcript, options = {}) {
-  const taxonomy = options.customTaxonomy || CATEGORY_TAXONOMY;
-  const context = options.sessionContext || {};
-
-  // Clean and normalize input
-  const text = (transcript || '').trim();
-  const lowerText = text.toLowerCase();
-
-  // 1. Check if LLM provider (OpenAI / Gemini) is available for deep NLU
-  if (process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY) {
-    try {
-      const llmResult = await parseUtteranceWithLLM(text, taxonomy, context);
-      if (llmResult && llmResult.transaction_type) {
-        return llmResult;
-      }
-    } catch (err) {
-      console.warn('⚠️ LLM NLU parse failed, falling back to rule-based NLU:', err.message);
-    }
-import { CATEGORY_TAXONOMY, CATEGORY_SYNONYMS, NUMBER_WORDS, DEFAULT_CONFIDENCE_THRESHOLD } from '../config/constants.js';
-
-/**
- * Parse transcript text into structured transaction object conforming to Section 3.2 schema.
- *
  * @param {string} transcript - Natural language transcript string (English, Tamil, Tanglish, Hindi, Hinglish)
  * @param {Object} options - Configuration and session context
  * @param {Object} options.customTaxonomy - Optional custom category taxonomy overriding default
