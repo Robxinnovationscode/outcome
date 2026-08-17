@@ -24,6 +24,18 @@ export async function processAudio(req, res) {
     const sttResult = await transcribeAudio({ file, audioBase64 });
     const rawTranscript = sttResult.transcript;
 
+    if (!rawTranscript) {
+      const friendlyHelp = sttResult.error || "I couldn't catch that clearly. Please try speaking again or type your expense!";
+      return res.status(200).json({
+        requires_clarification: true,
+        missing_fields: ['amount', 'category'],
+        raw_transcript: null,
+        stt_provider: sttResult.stt_provider,
+        confirmation_spoken: friendlyHelp,
+        follow_up_question: friendlyHelp
+      });
+    }
+
     // 2. NLU Entity Extraction
     const parsedData = await parseUtterance(rawTranscript, { customTaxonomy });
 
@@ -31,20 +43,18 @@ export async function processAudio(req, res) {
     let dbResult = null;
     let confirmationMessage = generateConfirmationText(parsedData);
 
-    if (model.toUpperCase() === 'B' || autoCommit) {
-      if (parsedData.missing_fields && parsedData.missing_fields.length > 0) {
-        confirmationMessage = `Parsed transcript: "${rawTranscript}". Missing required info: ${parsedData.missing_fields.join(', ')}. Please clarify before writing.`;
-      } else {
-        dbResult = await executeFirestoreCRUD('create', parsedData, userId);
-        // Ingest into RAG
-        try {
-          await ingestTextForRag({
-            userId,
-            text: `${parsedData.transaction_type} of ₹${parsedData.amount} for ${parsedData.category} on ${parsedData.date}. Notes: ${parsedData.notes}`
-          });
-        } catch (e) {
-          // ignore rag error
-        }
+    if (parsedData.missing_fields && parsedData.missing_fields.length > 0) {
+      confirmationMessage = generateFollowUpQuestion(parsedData);
+    } else if (model.toUpperCase() === 'B' || autoCommit) {
+      dbResult = await executeFirestoreCRUD('create', parsedData, userId);
+      // Ingest into RAG
+      try {
+        await ingestTextForRag({
+          userId,
+          text: `${parsedData.transaction_type} of ₹${parsedData.amount} for ${parsedData.category} on ${parsedData.date}. Notes: ${parsedData.notes}`
+        });
+      } catch (e) {
+        // ignore rag error
       }
     }
 
