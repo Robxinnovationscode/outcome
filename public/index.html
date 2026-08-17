@@ -193,7 +193,7 @@
                 <strong>LigthsON Assistant</strong>
                 <span class="msg-time">Just now</span>
               </div>
-              <p>Hello! I am your Voice Finance Assistant powered by <strong>RAG and NLU</strong>. Click <em>"Talk to Your Voice Assistant"</em> or speak/type any transaction, update, query, or deletion instruction!</p>
+              <p>Hey! I'm your personal finance assistant. 🎙️ <strong>Tap the mic</strong> and say something like <em>"Spent 350 on groceries"</em>, or just <em>type below</em>. I'll log it, query it, update it — whatever you need!</p>
             </div>
           </div>
         </div>
@@ -207,13 +207,42 @@
           </div>
         </div>
 
-        <!-- Text Utterance Input (Direct typing fallback) -->
-        <form id="text-form" class="chat-input-form">
-          <input type="text" id="utterance-input" placeholder="Type a voice utterance or transaction sentence..." required>
-          <button type="submit" class="btn btn-primary" id="submit-btn">
-            <span>⚡ Send</span>
-          </button>
-        </form>
+        <!-- Unified Talk-or-Type Input Bar -->
+        <div class="unified-input-bar">
+          <!-- Mic status indicator -->
+          <div class="mic-status-row" id="mic-status-row">
+            <span class="mic-status-dot" id="mic-status-dot"></span>
+            <span class="mic-status-label" id="mic-status-label">Click the mic to start voice input</span>
+          </div>
+
+          <form id="text-form" class="chat-input-form-v2">
+            <!-- Inline mic toggle button -->
+            <button type="button" id="inline-mic-btn" class="inline-mic-btn" title="Hold to speak / Click to start voice session">
+              <span id="inline-mic-icon">🎙️</span>
+            </button>
+
+            <!-- Text input -->
+            <input
+              type="text"
+              id="utterance-input"
+              placeholder="Talk or type — &quot;Spent 350 on groceries&quot;..."
+              autocomplete="off"
+              spellcheck="false"
+            >
+
+            <!-- Send button -->
+            <button type="submit" class="inline-send-btn" id="submit-btn" title="Send">
+              <span>⚡</span>
+            </button>
+          </form>
+
+          <!-- Quick hint chips below input -->
+          <div class="input-hint-chips">
+            <span class="hint-chip" data-text="What are my total expenses?">📊 My expenses</span>
+            <span class="hint-chip" data-text="Give me a full financial health summary">🧠 Summary</span>
+            <span class="hint-chip" data-text="Delete my last expense">🗑️ Undo last</span>
+          </div>
+        </div>
       </section>
 
       <!-- Right Column: Live Firestore Ledger & Real-Time CRUD Board -->

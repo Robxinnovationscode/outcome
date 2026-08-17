@@ -445,6 +445,21 @@ export async function conversationalAgent(req, res) {
         });
       }
 
+      // Guard: if NLU couldn't reliably parse key fields, ask for clarification
+      // rather than silently logging a garbage "Other / ₹0" record.
+      if (!parsedData.amount || parsedData.amount <= 0 || !parsedData.category || parsedData.category === 'Other') {
+        const followUp = generateFollowUpQuestion(parsedData);
+        return res.status(200).json({
+          success: true,
+          action_performed: 'clarification_needed',
+          requires_clarification: true,
+          missing_fields: parsedData.missing_fields,
+          spokenResponse: followUp,
+          follow_up_question: followUp,
+          parsedData
+        });
+      }
+
       // Execute CRUD Create in Model B
       dbResult = await executeFirestoreCRUD('create', parsedData, userId);
 
@@ -492,6 +507,19 @@ export async function agentProcessAudio(req, res) {
     if (!file && !audioBase64) return res.status(400).json({ success: false, message: 'audio required' });
 
     const stt = await transcribeAudio({ file, audioBase64 });
+
+    // If STT returned null (no provider configured or silent audio), respond gracefully
+    if (!stt.transcript) {
+      return res.status(200).json({
+        success: true,
+        action_performed: 'clarification_needed',
+        requires_clarification: true,
+        spokenResponse: stt.error || 'Sorry, I could not hear you clearly. Please try speaking again.',
+        follow_up_question: stt.error || 'No speech detected. Please speak and try again.',
+        stt_provider: stt.stt_provider
+      });
+    }
+
     req.body.text = stt.transcript;
     req.body.userId = userId;
     return conversationalAgent(req, res);

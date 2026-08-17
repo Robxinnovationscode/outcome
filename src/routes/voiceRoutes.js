@@ -35,8 +35,19 @@ const upload = multer({
 router.get('/health', getHealth);
 router.get('/categories', getCategories);
 router.get('/diag', getDiag);
-// Protect token issuance so authenticated users can request LiveKit tokens (with sandbox fallback)
-router.post('/token', verifyFirebaseIdToken, createVoiceToken);
+// Token endpoint: try Firebase auth, but fall through in sandbox/dev mode when Firebase is not configured
+router.post('/token', (req, res, next) => {
+  // If no Firebase credentials are configured, skip auth and issue a sandbox token
+  const hasFirebaseConfig = Boolean(
+    process.env.FIREBASE_SERVICE_ACCOUNT_KEY || process.env.FIREBASE_KEY_PATH
+  );
+  if (!hasFirebaseConfig) {
+    // Sandbox mode — attach a guest identity so the controller can use it
+    req.user = { uid: req.body?.userId || `guest_${Date.now()}` };
+    return next();
+  }
+  return verifyFirebaseIdToken(req, res, next);
+}, createVoiceToken);
 
 // Direct Transaction CRUD Endpoints (Live Firestore / In-memory sync)
 router.get('/transactions', listAllTransactions);

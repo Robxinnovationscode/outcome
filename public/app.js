@@ -83,7 +83,14 @@ document.addEventListener('DOMContentLoaded', () => {
   let audioContext = null;
   let analyserNode = null;
   let visualizerAnimFrame = null;
-  const currentUserId = 'user_' + Math.random().toString(36).substr(2, 6);
+  // Persist userId across page refreshes so transaction history stays consistent
+  const currentUserId = (() => {
+    const stored = localStorage.getItem('ligthson_user_id');
+    if (stored) return stored;
+    const fresh = 'user_' + Math.random().toString(36).substr(2, 9);
+    localStorage.setItem('ligthson_user_id', fresh);
+    return fresh;
+  })();
 
   // Proactive conversation context (remembers partial category)
   let proactiveContext = null; // { category, type }
@@ -128,7 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return 'en-IN'; // default English
   }
 
-  // Pick best available TTS voice for a given language
+  // Pick best available TTS voice for a given language — strongly prefer male voices
   function pickVoiceForLang(lang) {
     const voices = window.speechSynthesis.getVoices();
     if (!voices || voices.length === 0) return null;
@@ -150,14 +157,30 @@ document.addEventListener('DOMContentLoaded', () => {
         voices[0]
       );
     }
-    // English — prefer male Indian voice
+    // English — comprehensive male voice preference list covering Chrome, Edge, Safari, Windows, macOS
     const maleMatchers = [
+      // Chrome / Google voices (male)
+      v => v.name === 'Google UK English Male',
+      v => v.name === 'Google US English',
+      // Microsoft Edge / Windows voices (male)
+      v => v.name.toLowerCase().includes('microsoft david'),
+      v => v.name.toLowerCase().includes('microsoft mark'),
+      v => v.name.toLowerCase().includes('microsoft james'),
+      v => v.name.toLowerCase().includes('microsoft guy'),
+      v => v.name.toLowerCase().includes('microsoft ravi'),  // Indian English male
+      // macOS / iOS voices (male)
+      v => v.name === 'Alex',
+      v => v.name === 'Fred',
+      v => v.name === 'Tom',
+      v => v.name === 'Daniel',  // British male on macOS
+      // Indian English male voices
       v => v.name.toLowerCase().includes('rishi'),
       v => v.name.toLowerCase().includes('deepak'),
-      v => v.name.toLowerCase().includes('google uk english male'),
       v => v.lang === 'en-IN' && v.name.toLowerCase().includes('male'),
+      // Fallback: any English voice
       v => v.name.toLowerCase().includes('google') && v.lang.startsWith('en'),
       v => v.lang === 'en-IN',
+      v => v.lang === 'en-GB',
       v => v.lang.startsWith('en'),
     ];
     for (const m of maleMatchers) {
@@ -470,21 +493,60 @@ document.addEventListener('DOMContentLoaded', () => {
     waveVisualizer.classList.remove('active');
     agentAvatar.classList.remove('speaking', 'listening');
 
+    // Sync inline mic button + status row
+    const inlineMicBtnEl = document.getElementById('inline-mic-btn');
+    const inlineMicIconEl = document.getElementById('inline-mic-icon');
+    const micDotEl = document.getElementById('mic-status-dot');
+    const micLabelEl = document.getElementById('mic-status-label');
+    const formV2 = document.querySelector('.chat-input-form-v2');
+
     if (state === 'listening') {
       avatarEmoji.textContent = '👂';
       waveVisualizer.classList.add('active');
       agentAvatar.classList.add('listening');
+      // Inline mic
+      if (inlineMicBtnEl) { inlineMicBtnEl.classList.add('listening'); inlineMicBtnEl.classList.remove('speaking'); }
+      if (inlineMicIconEl) inlineMicIconEl.textContent = '🎤';
+      if (micDotEl) { micDotEl.className = 'mic-status-dot listening'; }
+      if (micLabelEl) { micLabelEl.textContent = 'Listening... speak now'; micLabelEl.classList.add('active'); }
+      if (formV2) { formV2.classList.add('listening'); }
     } else if (state === 'thinking') {
       avatarEmoji.textContent = '🧠';
       waveVisualizer.classList.add('active');
+      if (inlineMicBtnEl) { inlineMicBtnEl.classList.remove('listening', 'speaking'); }
+      if (inlineMicIconEl) inlineMicIconEl.textContent = '⏳';
+      if (micDotEl) micDotEl.className = 'mic-status-dot';
+      if (micLabelEl) { micLabelEl.textContent = 'Processing...'; micLabelEl.classList.remove('active'); }
+      if (formV2) formV2.classList.remove('listening');
     } else if (state === 'speaking') {
       avatarEmoji.textContent = '🗣️';
       waveVisualizer.classList.add('active');
       agentAvatar.classList.add('speaking');
+      if (inlineMicBtnEl) { inlineMicBtnEl.classList.remove('listening'); inlineMicBtnEl.classList.add('speaking'); }
+      if (inlineMicIconEl) inlineMicIconEl.textContent = '🔊';
+      if (micDotEl) micDotEl.className = 'mic-status-dot speaking';
+      if (micLabelEl) { micLabelEl.textContent = 'Speaking...'; micLabelEl.classList.remove('active'); }
+      if (formV2) formV2.classList.remove('listening');
     } else if (state === 'connecting') {
       avatarEmoji.textContent = '📡';
+      if (inlineMicBtnEl) { inlineMicBtnEl.classList.remove('listening', 'speaking'); }
+      if (inlineMicIconEl) inlineMicIconEl.textContent = '📡';
+      if (micDotEl) micDotEl.className = 'mic-status-dot';
+      if (micLabelEl) { micLabelEl.textContent = 'Connecting...'; micLabelEl.classList.remove('active'); }
+      if (formV2) formV2.classList.remove('listening');
     } else {
-      avatarEmoji.textContent = '🤖';
+      // idle / muted / unknown
+      avatarEmoji.textContent = state === 'muted' ? '🔇' : '🤖';
+      if (inlineMicBtnEl) { inlineMicBtnEl.classList.remove('listening', 'speaking'); }
+      if (inlineMicIconEl) inlineMicIconEl.textContent = isCallActive ? '🎙️' : '🎙️';
+      if (micDotEl) micDotEl.className = state === 'muted' ? 'mic-status-dot error' : 'mic-status-dot';
+      if (micLabelEl) {
+        micLabelEl.textContent = isCallActive
+          ? (state === 'muted' ? 'Microphone muted' : 'Ready — tap mic to speak')
+          : 'Click the mic to start voice input';
+        micLabelEl.classList.remove('active');
+      }
+      if (formV2) formV2.classList.remove('listening');
     }
   }
 
@@ -551,12 +613,34 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Voice Prompt Chips
-  voiceChips.forEach(chip => {
+  // Inline Mic Button — start/stop voice session
+  const inlineMicBtn = document.getElementById('inline-mic-btn');
+  const inlineMicIcon = document.getElementById('inline-mic-icon');
+  const micStatusDot = document.getElementById('mic-status-dot');
+  const micStatusLabel = document.getElementById('mic-status-label');
+  const chatInputFormV2 = document.querySelector('.chat-input-form-v2');
+
+  if (inlineMicBtn) {
+    inlineMicBtn.addEventListener('click', async () => {
+      if (!isCallActive) {
+        // Start voice session
+        await startVoiceSession();
+      } else if (isRecognizing) {
+        // Stop current recognition turn gracefully
+        try { speechRecognizer.stop(); } catch (e) {}
+      } else {
+        // Already connected — start a new listening turn
+        startListeningTurn();
+      }
+    });
+  }
+
+  // Hint chips below the input
+  document.querySelectorAll('.hint-chip').forEach(chip => {
     chip.addEventListener('click', () => {
-      const sampleText = chip.dataset.text;
-      utteranceInput.value = sampleText;
-      processConversationalTurn(sampleText);
+      const t = chip.dataset.text;
+      if (utteranceInput) utteranceInput.value = t;
+      processConversationalTurn(t);
     });
   });
 
@@ -619,9 +703,10 @@ document.addEventListener('DOMContentLoaded', () => {
       clarificationBanner.classList.remove('hidden');
       clarificationMsg.textContent = followUp;
       setAssistantState('speaking', followUp);
+      // Always provide a callback — even if TTS is off — so listening restarts reliably
       speakAssistantResponse(followUp, detectedLang, () => {
+        setAssistantState('listening', `Waiting for amount for ${detected.category}...`);
         if (isCallActive && !isMuted) {
-          setAssistantState('listening', `Waiting for amount for ${detected.category}...`);
           startListeningTurn();
         }
       });
@@ -803,7 +888,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate   = 1.35;   // fast & natural
+    utterance.rate   = 1.25;   // 1.25x — requested by user; natural & clear
     utterance.pitch  = 0.88;   // slightly deeper = male
     utterance.volume = 1.0;
     utterance.lang   = lang;

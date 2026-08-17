@@ -1235,3 +1235,224 @@ input:checked + .slider:before {
 .hidden {
   display: none !important;
 }
+
+/* ============================================================
+   UNIFIED TALK-OR-TYPE INPUT BAR
+   ============================================================ */
+
+.unified-input-bar {
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
+
+/* Mic status indicator row */
+.mic-status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.mic-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex-shrink: 0;
+  transition: background 0.3s ease, box-shadow 0.3s ease;
+}
+
+.mic-status-dot.listening {
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
+  animation: mic-pulse 1s ease-in-out infinite;
+}
+
+.mic-status-dot.speaking {
+  background: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3);
+}
+
+.mic-status-dot.error {
+  background: #ef4444;
+}
+
+.mic-status-label {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  transition: color 0.3s ease;
+}
+
+.mic-status-label.active {
+  color: #22c55e;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.35); opacity: 0.7; }
+}
+
+/* Input form row */
+.chat-input-form-v2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  padding: 4px 6px 4px 4px;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.chat-input-form-v2:focus-within {
+  border-color: rgba(99, 102, 241, 0.5);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+.chat-input-form-v2.listening {
+  border-color: rgba(34, 197, 94, 0.55);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.12);
+}
+
+/* Inline mic button */
+.inline-mic-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: var(--primary-gradient);
+  color: white;
+  font-size: 18px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.25s ease;
+  position: relative;
+  overflow: visible;
+}
+
+.inline-mic-btn:hover {
+  transform: scale(1.08);
+  box-shadow: 0 0 16px rgba(99, 102, 241, 0.5);
+}
+
+.inline-mic-btn:active {
+  transform: scale(0.95);
+}
+
+/* Listening state — green ring pulse */
+.inline-mic-btn.listening {
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.45);
+  animation: mic-btn-breathe 1.5s ease-in-out infinite;
+}
+
+/* Speaking state — indigo */
+.inline-mic-btn.speaking {
+  background: var(--primary-gradient);
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.45);
+}
+
+@keyframes mic-btn-breathe {
+  0%, 100% { box-shadow: 0 0 12px rgba(34, 197, 94, 0.4); }
+  50% { box-shadow: 0 0 28px rgba(34, 197, 94, 0.7); }
+}
+
+/* Outer ripple ring when listening */
+.inline-mic-btn.listening::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid rgba(34, 197, 94, 0.5);
+  animation: mic-ripple 1.5s ease-out infinite;
+}
+
+@keyframes mic-ripple {
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+/* Text input inside form */
+.chat-input-form-v2 input[type="text"] {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  padding: 8px 4px;
+  min-width: 0;
+}
+
+.chat-input-form-v2 input[type="text"]::placeholder {
+  color: var(--text-dim);
+}
+
+/* Inline send button */
+.inline-send-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--primary-glow);
+  font-size: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s ease, transform 0.15s ease;
+}
+
+.inline-send-btn:hover {
+  background: rgba(99, 102, 241, 0.35);
+  transform: scale(1.1);
+}
+
+.inline-send-btn:active {
+  transform: scale(0.92);
+}
+
+/* Quick hint chips below input */
+.input-hint-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.hint-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-color);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.15s ease;
+}
+
+.hint-chip:hover {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.4);
+  color: var(--primary-glow);
+  transform: translateY(-1px);
+}
+
+.hint-chip:active {
+  transform: translateY(0);
+}
+
