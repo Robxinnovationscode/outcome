@@ -300,7 +300,7 @@ User Utterance: "${text}"`;
   // 1. Google Gemini Flash (Native Multi-Lingual & JSON Mode)
   const geminiKey = process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.trim() : '';
   if (geminiKey) {
-    const modelsToTry = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-latest'];
+    const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-flash-latest'];
     for (const modelName of modelsToTry) {
       try {
         const response = await fetch(

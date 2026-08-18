@@ -1,5 +1,34 @@
 import { getFirestore, isFirebaseConfigured } from '../config/firebase.js';
 
+// ── Server-Sent Events (SSE) — notify connected browser tabs after any CRUD ──
+const sseClients = new Set();
+
+export function registerSseClient(res) {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // disable Nginx buffering
+  res.flushHeaders();
+  // Heartbeat every 25s to keep connection alive through proxies
+  const heartbeat = setInterval(() => res.write(':heartbeat\n\n'), 25000);
+  sseClients.add(res);
+  res.on('close', () => { clearInterval(heartbeat); sseClients.delete(res); });
+}
+
+export function broadcastCrudEvent(event) {
+  const payload = `data: ${JSON.stringify(event)}\n\n`;
+  for (const client of sseClients) {
+    try { client.write(payload); } catch (_) { sseClients.delete(client); }
+  }
+}
+
+/**
+ * Returns the current Firestore mode for the health endpoint.
+ */
+export function getFirestoreMode() {
+  return isFirebaseConfigured() ? 'live_firestore' : 'in_memory_sandbox';
+}
+
 // In-memory ledger cache for development / sandbox / fallback mode
 const inMemoryStore = {
   users: {
@@ -102,9 +131,10 @@ export async function executeFirestoreCRUD(operation, data, userId = 'default_us
 
     if (operation === 'create') {
       const docId = `mem_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-      const newRecord = { id: docId, ...payload };
+      const newRecord = { id: docId, ...payload, transaction_type: data.transaction_type || 'expense' };
       storeCollection.unshift(newRecord);
       userStore[collectionName] = storeCollection;
+      broadcastCrudEvent({ type: 'create', userId, collectionName, docId, record: newRecord });
       return {
         success: true,
         mode: 'in_memory_sandbox',
@@ -151,6 +181,7 @@ export async function executeFirestoreCRUD(operation, data, userId = 'default_us
         updatedAt: new Date().toISOString()
       };
       storeCollection[targetIndex] = updated;
+      broadcastCrudEvent({ type: 'update', userId, collectionName, docId: existing.id });
 
       return {
         success: true,
@@ -179,6 +210,7 @@ export async function executeFirestoreCRUD(operation, data, userId = 'default_us
       }
 
       const deletedItem = storeCollection.splice(targetIndex, 1)[0];
+      broadcastCrudEvent({ type: 'delete', userId, collectionName, docId: deletedItem.id });
       return {
         success: true,
         mode: 'in_memory_sandbox',
@@ -198,11 +230,37 @@ export async function executeFirestoreCRUD(operation, data, userId = 'default_us
         createdAt: new Date(),
         updatedAt: new Date()
       });
+
+      // Synchronize with mobile app primary collection: users/{userId}/transactions
+      const mainTxPath = `users/${userId}/transactions`;
+      let mainTxId = null;
+      try {
+        const mainTxRef = await db.collection(mainTxPath).add({
+          name: payload.category || 'Transaction',
+          amount: payload.amount,
+          type: data.transaction_type === 'income' ? 'Income' : (data.transaction_type === 'investment' ? 'Investment' : 'Expense'),
+          subType: payload.category || 'General',
+          category: payload.category || 'General',
+          date: payload.date,
+          notes: payload.notes || '',
+          source: 'voice_agent',
+          confidence: payload.confidence,
+          subCollectionDocId: docRef.id,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        });
+        mainTxId = mainTxRef.id;
+      } catch (mainErr) {
+        console.warn('⚠️ Could not dual-write to users/{userId}/transactions:', mainErr.message);
+      }
+
+      broadcastCrudEvent({ type: 'create', userId, collectionName, docId: docRef.id, mainTxId });
       return {
         success: true,
         mode: 'live_firestore',
         operation: 'create',
         docId: docRef.id,
+        mainTxId: mainTxId,
         path: `${path}/${docRef.id}`,
         data: payload
       };
@@ -265,6 +323,7 @@ export async function executeFirestoreCRUD(operation, data, userId = 'default_us
         updatedAt: new Date()
       });
 
+      broadcastCrudEvent({ type: 'update', userId, collectionName, docId: docToUpdate.id });
       return {
         success: true,
         mode: 'live_firestore',
@@ -306,6 +365,7 @@ export async function executeFirestoreCRUD(operation, data, userId = 'default_us
       const deletedData = docToDelete.data();
       await docToDelete.ref.delete();
 
+      broadcastCrudEvent({ type: 'delete', userId, collectionName, docId: docToDelete.id });
       return {
         success: true,
         mode: 'live_firestore',
@@ -364,18 +424,49 @@ export async function fetchAllTransactions(userId = 'default_user') {
 
   const db = getFirestore();
   try {
+    const seenIds = new Set();
+    // 1. Read from main mobile collection: users/{userId}/transactions
+    try {
+      const mainSnap = await db.collection(`users/${userId}/transactions`).orderBy('date', 'desc').limit(50).get();
+      mainSnap.forEach(doc => {
+        const data = doc.data();
+        seenIds.add(doc.id);
+        if (data.subCollectionDocId) seenIds.add(data.subCollectionDocId);
+        const rawType = (data.type || '').toLowerCase();
+        const txType = rawType === 'income' ? 'income' : (rawType === 'investment' ? 'investment' : 'expense');
+        allRecords.push({
+          id: doc.id,
+          amount: typeof data.amount === 'number' ? data.amount : parseFloat(data.amount) || 0,
+          category: data.category || data.name || data.subType || 'General',
+          transaction_type: txType,
+          date: data.date || new Date().toISOString().split('T')[0],
+          notes: data.notes || '',
+          source: data.source || 'mobile_app',
+          confidence: data.confidence || 1.0,
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt,
+          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : data.updatedAt
+        });
+      });
+    } catch (mErr) {
+      console.warn('⚠️ Could not query users/{userId}/transactions:', mErr.message);
+    }
+
+    // 2. Also read from subcollections for backward compatibility
     for (const col of collections) {
       const path = `users/${userId}/${col}`;
       const snap = await db.collection(path).orderBy('date', 'desc').limit(25).get();
       snap.forEach(doc => {
-        const data = doc.data();
-        allRecords.push({
-          id: doc.id,
-          ...data,
-          transaction_type: col === 'investments' ? 'investment' : (col === 'income' ? 'income' : 'expense'),
-          createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt,
-          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : data.updatedAt
-        });
+        if (!seenIds.has(doc.id)) {
+          seenIds.add(doc.id);
+          const data = doc.data();
+          allRecords.push({
+            id: doc.id,
+            ...data,
+            transaction_type: col === 'investments' ? 'investment' : (col === 'income' ? 'income' : 'expense'),
+            createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt,
+            updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : data.updatedAt
+          });
+        }
       });
     }
     allRecords.sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));

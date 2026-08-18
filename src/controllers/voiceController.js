@@ -1,11 +1,21 @@
 import { transcribeAudio } from '../services/sttService.js';
 import { parseUtterance } from '../services/nluEngine.js';
 import { sessionManager } from '../services/sessionManager.js';
-import { executeFirestoreCRUD, fetchAllTransactions } from '../services/firestoreService.js';
+import { executeFirestoreCRUD, fetchAllTransactions, registerSseClient, getFirestoreMode } from '../services/firestoreService.js';
 import { createParticipantToken, getLiveKitUrl } from '../services/livekitTokenService.js';
 import { CATEGORY_TAXONOMY, DEFAULT_CONFIDENCE_THRESHOLD } from '../config/constants.js';
 import { ingestTextForRag, queryRag, summarizeFullHistory, callLLM } from '../services/ragService.js';
 import { detectLanguage, generateLocalizedSpokenResponse, generateLocalizedFollowUp } from '../services/languageService.js';
+
+/**
+ * Controller: Server-Sent Events — live ledger refresh stream
+ * Clients subscribe once; any CRUD event auto-pushes a refresh signal.
+ */
+export function ledgerEventsStream(req, res) {
+  registerSseClient(res);
+  // Send an initial connected event so the client knows the stream is ready
+  res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() })}\n\n`);
+}
 
 /**
  * Controller 1: Process Audio Input (Multipart file or Base64 string)
@@ -556,17 +566,19 @@ export async function agentProcessAudio(req, res) {
  * Controller 7: Health & System Status Check
  */
 export function getHealth(req, res) {
+  const firestoreMode = getFirestoreMode();
   return res.status(200).json({
     status: 'online',
     service: 'LigthsON Voice-Enabled Transaction Agent API',
-    version: '1.0.0',
+    version: '1.1.0',
     timestamp: new Date().toISOString(),
     supported_models: ['Model A (Voice/NLU JSON)', 'Model B (Voice/NLU + Direct Firestore CRUD)'],
+    firestore_mode: firestoreMode,
     livekit_enabled: true,
     rag_enabled: true,
     nlu_enabled: true,
     llm_enabled: Boolean(process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY),
-    stt_provider: process.env.OPENAI_API_KEY ? 'OpenAI Whisper' : (process.env.GROQ_API_KEY ? 'Groq Whisper' : 'Built-in Fallback Decoder')
+    stt_provider: process.env.OPENAI_API_KEY ? 'OpenAI Whisper' : (process.env.GROQ_API_KEY ? 'Groq Whisper' : 'Gemini Flash STT')
   });
 }
 

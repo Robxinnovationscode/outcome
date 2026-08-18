@@ -118,13 +118,14 @@ document.addEventListener('DOMContentLoaded', () => {
   ];
 
   function detectLanguage(text) {
-    if (!text) return 'en-IN';
+    if (!text) return detectedLang; // return sticky lang if no text
     const lower = text.toLowerCase();
 
-    // Check for Tamil script characters
-    if (/[\u0B80-\u0BFF]/.test(text)) return 'ta-IN';
-    // Check for Hindi/Devanagari script characters
-    if (/[\u0900-\u097F]/.test(text)) return 'hi-IN';
+    // 1. Unicode script checks (highest priority — exact match)
+    if (/[\u0B80-\u0BFF]/.test(text)) return 'ta-IN';  // Tamil script
+    if (/[\u0900-\u097F]/.test(text)) return 'hi-IN';  // Devanagari / Hindi script
+    if (/[\u0D00-\u0D7F]/.test(text)) return 'ml-IN';  // Malayalam script
+    if (/[\u0C80-\u0CFF]/.test(text)) return 'kn-IN';  // Kannada script
 
     const tamilHits = TAMIL_MARKERS.filter(w => lower.includes(w)).length;
     const hindiHits = HINDI_MARKERS.filter(w => lower.includes(w)).length;
@@ -132,7 +133,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (tamilHits > 0 && hindiHits === 0) return 'ta-IN';
     if (hindiHits > 0 && tamilHits === 0) return 'hi-IN';
     if (tamilHits > 0 && hindiHits > 0) return 'en-IN'; // mixed → English base
-    return 'en-IN'; // default English
+    return detectedLang; // return sticky session language
   }
 
   // Pick best available TTS voice for a given language — strongly prefer male voices
@@ -258,6 +259,34 @@ document.addEventListener('DOMContentLoaded', () => {
     checkApiHealth();
     loadTransactions();
     initSpeechRecognition();
+    connectLedgerEventStream(); // ← SSE live refresh
+  }
+
+  // SSE connection — auto-refresh ledger after any CRUD from any source
+  let sseSource = null;
+  function connectLedgerEventStream() {
+    if (sseSource) return; // already connected
+    try {
+      sseSource = new EventSource('/api/voice/ledger-events');
+      sseSource.onmessage = (ev) => {
+        try {
+          const payload = JSON.parse(ev.data);
+          if (payload.type && payload.type !== 'connected') {
+            // A CRUD happened — reload ledger silently
+            loadTransactions();
+          }
+        } catch (_) {}
+      };
+      sseSource.onerror = () => {
+        // Connection lost — retry in 5s
+        sseSource.close();
+        sseSource = null;
+        setTimeout(connectLedgerEventStream, 5000);
+      };
+      console.log('🟢 SSE ledger stream connected at /api/voice/ledger-events');
+    } catch (e) {
+      console.warn('SSE not available, using fallback polling', e.message);
+    }
   }
 
   // API Health Check
@@ -610,15 +639,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Form Submit Handler
-  textForm.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const text = utteranceInput.value.trim();
-    if (text) {
-      processConversationalTurn(text);
-      utteranceInput.value = '';
-    }
-  });
+  // Form Submit Handler (if form is present)
+  if (textForm) {
+    textForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = utteranceInput ? utteranceInput.value.trim() : '';
+      if (text) {
+        processConversationalTurn(text);
+        if (utteranceInput) utteranceInput.value = '';
+      }
+    });
+  }
 
   // Inline Mic Button — start/stop voice session
   const inlineMicBtn = document.getElementById('inline-mic-btn');
@@ -696,7 +727,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Auto-detect language from user's text (for text-input path too)
     const textLang = detectLanguage(userText);
-    if (textLang !== 'en-IN') detectedLang = textLang;
+    // Sticky: if we detected a specific language, keep it for the session
+    if (textLang !== 'en-IN' || /[\u0B80-\u0BFF\u0900-\u097F\u0D00-\u0D7F\u0C80-\u0CFF]/.test(userText)) {
+      detectedLang = textLang;
+    }
 
     // -- PROACTIVE FLOW: If user only said a category word with no amount --
     const detected = detectCategoryFromText(userText);
@@ -1038,20 +1072,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Delete Transaction
+  // Delete Transaction — instant, no confirmation dialog
   async function deleteTransaction(type, id) {
-    if (!confirm('Are you sure you want to delete this transaction from Firestore?')) return;
     try {
       const res = await fetch(`/api/voice/transactions/${type}/${id}?userId=${currentUserId}`, {
         method: 'DELETE'
       });
       const data = await res.json();
       if (data.success) {
-        await loadTransactions();
-        appendDialogMessage('agent', `Deleted ${type} transaction (${id}) from database.`, 'delete');
+        // SSE will trigger loadTransactions() automatically
+        // But also update local state immediately for instant UI feedback
+        allTransactions = allTransactions.filter(t => t.id !== id);
+        renderLedger(allTransactions);
+        updateStats(allTransactions);
+        appendDialogMessage('agent', `✅ Deleted ${type} transaction from your records.`, 'delete');
+      } else {
+        appendDialogMessage('agent', `⚠️ Delete failed: ${data.error || 'Unknown error'}`, 'delete');
       }
     } catch (e) {
-      alert('Delete failed: ' + e.message);
+      appendDialogMessage('agent', `❌ Delete error: ${e.message}`, 'delete');
     }
   }
 

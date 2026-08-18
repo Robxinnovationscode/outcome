@@ -19,7 +19,8 @@ import {
   listAllTransactions,
   createTransactionDirect,
   updateTransactionDirect,
-  deleteTransactionDirect
+  deleteTransactionDirect,
+  ledgerEventsStream
 } from '../controllers/voiceController.js';
 import { verifyFirebaseIdToken } from '../middleware/verifyFirebaseIdToken.js';
 
@@ -50,6 +51,7 @@ router.post('/token', (req, res, next) => {
 }, createVoiceToken);
 
 // Direct Transaction CRUD Endpoints (Live Firestore / In-memory sync)
+router.get('/ledger-events', ledgerEventsStream); // SSE — live push after any CRUD
 router.get('/transactions', listAllTransactions);
 router.post('/transactions', createTransactionDirect);
 router.put('/transactions/:type/:id', updateTransactionDirect);

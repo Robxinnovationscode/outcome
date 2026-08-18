@@ -104,7 +104,7 @@ export async function transcribeAudio({ file, audioBase64, language = 'en' }) {
   const geminiKey = process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.trim() : '';
   if (geminiKey) {
     const audioB64 = buffer.toString('base64');
-    const modelsToTry = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-latest'];
+    const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-flash-latest'];
 
     for (const modelName of modelsToTry) {
       try {
