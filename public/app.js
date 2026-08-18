@@ -137,9 +137,24 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Pick best available TTS voice for a given language — strongly prefer male voices
-  function pickVoiceForLang(lang) {
+  // Voice Personas & Language Choices Configuration
+  const PERSONA_CONFIGS = {
+    ravi:  { name: 'Ravi',  gender: 'male',   pitch: 0.85, rate: 1.25, emoji: '👨‍💼', desc: 'Deep Male' },
+    priya: { name: 'Priya', gender: 'female', pitch: 1.15, rate: 1.20, emoji: '👩‍💼', desc: 'Warm Female' },
+    alex:  { name: 'Alex',  gender: 'neutral',pitch: 0.98, rate: 1.25, emoji: '🤖', desc: 'Assistant' },
+    kavya: { name: 'Kavya', gender: 'female', pitch: 1.08, rate: 1.15, emoji: '✨', desc: 'Friendly' },
+  };
+
+  let selectedPersona = localStorage.getItem('ligths_voice_persona') || 'ravi';
+  let selectedLanguage = localStorage.getItem('ligths_voice_lang') || 'auto';
+
+  // Pick best available TTS voice for a given language & persona
+  function pickVoiceForLang(lang, personaId = selectedPersona) {
     const voices = window.speechSynthesis.getVoices();
     if (!voices || voices.length === 0) return null;
+
+    const persona = PERSONA_CONFIGS[personaId] || PERSONA_CONFIGS.ravi;
+    const isFemale = persona.gender === 'female';
 
     if (lang === 'ta-IN' || lang === 'ta') {
       return (
@@ -158,49 +173,128 @@ document.addEventListener('DOMContentLoaded', () => {
         voices.find(v => v.lang === 'hi_IN') ||
         voices.find(v => v.lang.startsWith('hi')) ||
         voices.find(v => v.name.toLowerCase().includes('hindi')) ||
-        voices.find(v => v.name.toLowerCase().includes('hemant')) ||
-        voices.find(v => v.name.toLowerCase().includes('madhav')) ||
-        voices.find(v => v.name.toLowerCase().includes('kalpana')) ||
+        voices.find(v => v.name.toLowerCase().includes(isFemale ? 'kalpana' : 'hemant')) ||
+        voices.find(v => v.name.toLowerCase().includes(isFemale ? 'swara' : 'madhav')) ||
         voices.find(v => v.lang === 'en-IN') ||
         voices[0]
       );
     }
-    // English — comprehensive male voice preference list covering Chrome, Edge, Safari, Windows, macOS
+
+    // English Matchers based on Persona Gender
+    const femaleMatchers = [
+      v => v.name === 'Google UK English Female',
+      v => v.name === 'Google US English Female',
+      v => v.name.toLowerCase().includes('microsoft zira'),
+      v => v.name.toLowerCase().includes('microsoft heera'),
+      v => v.name.toLowerCase().includes('samantha'),
+      v => v.name.toLowerCase().includes('victoria'),
+      v => v.name.toLowerCase().includes('karen'),
+      v => v.lang === 'en-IN' && v.name.toLowerCase().includes('female'),
+      v => v.lang === 'en-IN',
+      v => v.lang.startsWith('en'),
+    ];
+
     const maleMatchers = [
-      // Chrome / Google voices (male)
       v => v.name === 'Google UK English Male',
       v => v.name === 'Google US English',
-      // Microsoft Edge / Windows voices (male)
       v => v.name.toLowerCase().includes('microsoft david'),
       v => v.name.toLowerCase().includes('microsoft mark'),
       v => v.name.toLowerCase().includes('microsoft james'),
       v => v.name.toLowerCase().includes('microsoft guy'),
-      v => v.name.toLowerCase().includes('microsoft ravi'),  // Indian English male
-      // macOS / iOS voices (male)
+      v => v.name.toLowerCase().includes('microsoft ravi'),
       v => v.name === 'Alex',
       v => v.name === 'Fred',
-      v => v.name === 'Tom',
-      v => v.name === 'Daniel',  // British male on macOS
-      // Indian English male voices
+      v => v.name === 'Daniel',
       v => v.name.toLowerCase().includes('rishi'),
       v => v.name.toLowerCase().includes('deepak'),
       v => v.lang === 'en-IN' && v.name.toLowerCase().includes('male'),
-      // Fallback: any English voice
       v => v.name.toLowerCase().includes('google') && v.lang.startsWith('en'),
       v => v.lang === 'en-IN',
-      v => v.lang === 'en-GB',
       v => v.lang.startsWith('en'),
     ];
-    for (const m of maleMatchers) {
+
+    const matchers = isFemale ? femaleMatchers : maleMatchers;
+    for (const m of matchers) {
       const found = voices.find(m);
       if (found) return found;
     }
     return voices[0];
   }
 
+  // Play Live Voice Sample Preview
+  function playVoiceSample(personaId = selectedPersona, langId = selectedLanguage) {
+    const persona = PERSONA_CONFIGS[personaId] || PERSONA_CONFIGS.ravi;
+    const targetLang = langId === 'auto' ? 'en-IN' : langId;
+
+    let sampleText = `Hello! I am ${persona.name}. Ready to record your expenses and investments!`;
+    if (langId === 'ta-IN') {
+      sampleText = `வணக்கம்! நான் ${persona.name}. உங்கள் பரிவர்த்தனைகளை கூறலாம்.`;
+    } else if (langId === 'hi-IN') {
+      sampleText = `नमस्ते! मैं ${persona.name}. आपका फाइनेंस असिस्टेंट तैयार है।`;
+    }
+
+    speakAssistantResponse(sampleText, targetLang, null, personaId);
+  }
+
+  // Init Voice Persona & Language Selector UI Event Handlers
+  function initVoicePersonaUI() {
+    const displayEl = document.getElementById('selected-voice-display');
+    const testSampleBtn = document.getElementById('test-voice-sample-btn');
+    const personaChips = document.querySelectorAll('#voice-persona-chips .p-chip');
+    const languageChips = document.querySelectorAll('#voice-language-chips .p-chip');
+
+    function updateDisplayLabel() {
+      if (!displayEl) return;
+      const persona = PERSONA_CONFIGS[selectedPersona] || PERSONA_CONFIGS.ravi;
+      const langLabel = selectedLanguage === 'ta-IN' ? '🪔 Tamil' : (selectedLanguage === 'hi-IN' ? '🇮🇳 Hindi' : (selectedLanguage === 'en-IN' ? '🇮🇳 English' : '🌐 Auto Detect'));
+      displayEl.textContent = `${persona.emoji} ${persona.name} (${persona.desc}) • ${langLabel}`;
+    }
+
+    // Restore saved state
+    personaChips.forEach(chip => {
+      if (chip.dataset.persona === selectedPersona) {
+        chip.classList.add('active');
+      } else {
+        chip.classList.remove('active');
+      }
+      chip.addEventListener('click', () => {
+        personaChips.forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        selectedPersona = chip.dataset.persona;
+        localStorage.setItem('ligths_voice_persona', selectedPersona);
+        updateDisplayLabel();
+        playVoiceSample(selectedPersona, selectedLanguage);
+      });
+    });
+
+    languageChips.forEach(chip => {
+      if (chip.dataset.lang === selectedLanguage) {
+        chip.classList.add('active');
+      } else {
+        chip.classList.remove('active');
+      }
+      chip.addEventListener('click', () => {
+        languageChips.forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        selectedLanguage = chip.dataset.lang;
+        localStorage.setItem('ligths_voice_lang', selectedLanguage);
+        updateDisplayLabel();
+        playVoiceSample(selectedPersona, selectedLanguage);
+      });
+    });
+
+    if (testSampleBtn) {
+      testSampleBtn.addEventListener('click', () => {
+        playVoiceSample(selectedPersona, selectedLanguage);
+      });
+    }
+
+    updateDisplayLabel();
+  }
+
   // Lazy voice init when voices list loads
   if (window.speechSynthesis) {
-    window.speechSynthesis.onvoiceschanged = () => pickVoiceForLang('en-IN');
+    window.speechSynthesis.onvoiceschanged = () => pickVoiceForLang('en-IN', selectedPersona);
   }
 
   // -------------------------------------------------------------
@@ -259,6 +353,7 @@ document.addEventListener('DOMContentLoaded', () => {
     checkApiHealth();
     loadTransactions();
     initSpeechRecognition();
+    initVoicePersonaUI();
     connectLedgerEventStream(); // ← SSE live refresh
   }
 
@@ -911,12 +1006,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------
-  // TEXT-TO-SPEECH — Auto language, Male voice, 1.35x speed
+  // TEXT-TO-SPEECH — Dynamic Voice Persona & Auto Language
   // -------------------------------------------------------
-  function speakAssistantResponse(text, lang, onEndCallback) {
+  function speakAssistantResponse(text, lang, onEndCallback, personaId = selectedPersona) {
     // Support legacy 2-arg calls: speakAssistantResponse(text, callback)
     if (typeof lang === 'function') { onEndCallback = lang; lang = detectedLang; }
-    if (!lang) lang = detectedLang || 'en-IN';
+    if (!lang) lang = (selectedLanguage !== 'auto' ? selectedLanguage : detectedLang) || 'en-IN';
 
     if (!ttsAudioToggle || !ttsAudioToggle.checked) {
       if (onEndCallback) onEndCallback();
@@ -929,16 +1024,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.speechSynthesis.cancel();
 
+    const persona = PERSONA_CONFIGS[personaId] || PERSONA_CONFIGS[selectedPersona] || PERSONA_CONFIGS.ravi;
+
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate   = 1.25;   // 1.25x — requested by user; natural & clear
-    utterance.pitch  = 0.88;   // slightly deeper = male
+    utterance.rate   = persona.rate || 1.25;
+    utterance.pitch  = persona.pitch || 0.88;
     utterance.volume = 1.0;
     utterance.lang   = lang;
 
-    // Pick best voice for this language automatically
-    const voice = pickVoiceForLang(lang);
+    // Pick best voice for this language & persona automatically
+    const voice = pickVoiceForLang(lang, personaId);
     if (voice) utterance.voice = voice;
-    console.log(`🔊 TTS → lang:${lang} | voice:${voice?.name} | text: ${text.slice(0,60)}...`);
+    console.log(`🔊 TTS → persona:${persona.name} | lang:${lang} | voice:${voice?.name} | text: ${text.slice(0,60)}...`);
 
     // Chrome keep-alive workaround for long utterances
     const keepAlive = setInterval(() => {

@@ -113,6 +113,43 @@
           </div>
         </div>
 
+        <!-- Live Voice Persona & Language Selection Strip -->
+        <div class="voice-persona-strip">
+          <div class="persona-strip-header">
+            <div class="persona-info-title">
+              <span class="persona-badge-icon">🎙️</span>
+              <span class="persona-label-main">Live Voice Persona & Language:</span>
+              <span class="persona-selected-display" id="selected-voice-display">👨‍💼 Ravi (Deep Male) • 🌐 Auto Detect</span>
+            </div>
+            <button type="button" class="btn btn-sm btn-sample-voice" id="test-voice-sample-btn">
+              <span>🔊</span>
+              <span>Test Sample</span>
+            </button>
+          </div>
+
+          <div class="persona-selectors-row">
+            <div class="persona-group">
+              <span class="group-label">Voice:</span>
+              <div class="persona-chips" id="voice-persona-chips">
+                <button type="button" class="p-chip active" data-persona="ravi">👨‍💼 Ravi</button>
+                <button type="button" class="p-chip" data-persona="priya">👩‍💼 Priya</button>
+                <button type="button" class="p-chip" data-persona="alex">🤖 Alex</button>
+                <button type="button" class="p-chip" data-persona="kavya">✨ Kavya</button>
+              </div>
+            </div>
+
+            <div class="persona-group">
+              <span class="group-label">Language:</span>
+              <div class="persona-chips" id="voice-language-chips">
+                <button type="button" class="p-chip active" data-lang="auto">🌐 Auto</button>
+                <button type="button" class="p-chip" data-lang="en-IN">🇮🇳 English</button>
+                <button type="button" class="p-chip" data-lang="ta-IN">🪔 Tamil</button>
+                <button type="button" class="p-chip" data-lang="hi-IN">🇮🇳 Hindi</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Main Action Trigger -->
         <div class="voice-action-bar">
           <button id="talk-assistant-btn" class="btn btn-hero">
