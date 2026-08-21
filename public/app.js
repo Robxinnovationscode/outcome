@@ -137,47 +137,53 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Pick best available TTS voice for a given language — strongly prefer male voices
-  // Voice Personas & Language Choices Configuration
+  // Voice Personas & Language Choices Configuration (Male & Female Only, 1.0x Rate)
   const PERSONA_CONFIGS = {
-    ravi:  { name: 'Ravi',  gender: 'male',   pitch: 0.85, rate: 1.25, emoji: '👨‍💼', desc: 'Deep Male' },
-    priya: { name: 'Priya', gender: 'female', pitch: 1.15, rate: 1.20, emoji: '👩‍💼', desc: 'Warm Female' },
-    alex:  { name: 'Alex',  gender: 'neutral',pitch: 0.98, rate: 1.25, emoji: '🤖', desc: 'Assistant' },
-    kavya: { name: 'Kavya', gender: 'female', pitch: 1.08, rate: 1.15, emoji: '✨', desc: 'Friendly' },
+    male:   { name: 'Male',   gender: 'male',   pitch: 0.90, rate: 1.0, emoji: '👨', desc: 'Male Voice' },
+    female: { name: 'Female', gender: 'female', pitch: 1.15, rate: 1.0, emoji: '👩', desc: 'Female Voice' },
   };
 
-  let selectedPersona = localStorage.getItem('ligths_voice_persona') || 'ravi';
+  function getPersonaConfig(id) {
+    if (id === 'female' || id === 'priya' || id === 'kavya') return PERSONA_CONFIGS.female;
+    return PERSONA_CONFIGS.male;
+  }
+
+  let selectedPersona = localStorage.getItem('ligths_voice_persona') || 'male';
+  if (selectedPersona !== 'male' && selectedPersona !== 'female') selectedPersona = 'male';
   let selectedLanguage = localStorage.getItem('ligths_voice_lang') || 'auto';
 
   // Pick best available TTS voice for a given language & persona
   function pickVoiceForLang(lang, personaId = selectedPersona) {
-    const voices = window.speechSynthesis.getVoices();
+    const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
     if (!voices || voices.length === 0) return null;
 
-    const persona = PERSONA_CONFIGS[personaId] || PERSONA_CONFIGS.ravi;
+    const persona = getPersonaConfig(personaId);
     const isFemale = persona.gender === 'female';
 
-    if (lang === 'ta-IN' || lang === 'ta') {
-      return (
-        voices.find(v => v.lang === 'ta-IN') ||
-        voices.find(v => v.lang === 'ta_IN') ||
-        voices.find(v => v.lang.startsWith('ta')) ||
-        voices.find(v => v.name.toLowerCase().includes('tamil')) ||
-        voices.find(v => v.name.toLowerCase().includes('valluvar')) ||
-        voices.find(v => v.lang === 'en-IN') ||
-        voices[0]
+    if (lang === 'ta-IN' || lang === 'ta' || lang.startsWith('ta')) {
+      const tamilVoice = voices.find(v =>
+        v.lang === 'ta-IN' ||
+        v.lang === 'ta_IN' ||
+        v.lang.toLowerCase().startsWith('ta') ||
+        v.name.toLowerCase().includes('tamil') ||
+        v.name.includes('தமிழ்') ||
+        v.name.toLowerCase().includes('valluvar') ||
+        v.name.toLowerCase().includes('inba') ||
+        v.name.toLowerCase().includes('latha')
       );
+      return tamilVoice || null;
     }
-    if (lang === 'hi-IN' || lang === 'hi') {
-      return (
-        voices.find(v => v.lang === 'hi-IN') ||
-        voices.find(v => v.lang === 'hi_IN') ||
-        voices.find(v => v.lang.startsWith('hi')) ||
-        voices.find(v => v.name.toLowerCase().includes('hindi')) ||
-        voices.find(v => v.name.toLowerCase().includes(isFemale ? 'kalpana' : 'hemant')) ||
-        voices.find(v => v.name.toLowerCase().includes(isFemale ? 'swara' : 'madhav')) ||
-        voices.find(v => v.lang === 'en-IN') ||
-        voices[0]
+
+    if (lang === 'hi-IN' || lang === 'hi' || lang.startsWith('hi')) {
+      const hindiVoice = voices.find(v =>
+        v.lang === 'hi-IN' ||
+        v.lang === 'hi_IN' ||
+        v.lang.toLowerCase().startsWith('hi') ||
+        v.name.toLowerCase().includes('hindi') ||
+        v.name.includes('हिंदी') ||
+        (isFemale ? v.name.toLowerCase().includes('kalpana') || v.name.toLowerCase().includes('swara') : v.name.toLowerCase().includes('hemant') || v.name.toLowerCase().includes('madhav'))
       );
+      return hindiVoice || null;
     }
 
     // English Matchers based on Persona Gender
@@ -218,19 +224,19 @@ document.addEventListener('DOMContentLoaded', () => {
       const found = voices.find(m);
       if (found) return found;
     }
-    return voices[0];
+    return voices[0] || null;
   }
 
   // Play Live Voice Sample Preview
   function playVoiceSample(personaId = selectedPersona, langId = selectedLanguage) {
-    const persona = PERSONA_CONFIGS[personaId] || PERSONA_CONFIGS.ravi;
+    const persona = getPersonaConfig(personaId);
     const targetLang = langId === 'auto' ? 'en-IN' : langId;
 
-    let sampleText = `Hello! I am ${persona.name}. Ready to record your expenses and investments!`;
+    let sampleText = `Hello! I am your ${persona.name} voice assistant. Ready to record your expenses and investments!`;
     if (langId === 'ta-IN') {
-      sampleText = `வணக்கம்! நான் ${persona.name}. உங்கள் பரிவர்த்தனைகளை கூறலாம்.`;
+      sampleText = `வணக்கம்! நான் உங்கள் ${persona.name === 'Male' ? 'ஆண்' : 'பெண்'} குரல் உதவியாளர். உங்கள் பரிவர்த்தனைகளை கூறலாம்.`;
     } else if (langId === 'hi-IN') {
-      sampleText = `नमस्ते! मैं ${persona.name}. आपका फाइनेंस असिस्टेंट तैयार है।`;
+      sampleText = `नमस्ते! मैं आपका ${persona.name === 'Male' ? 'पुरुष' : 'महिला'} वॉइस असिस्टेंट हूँ। आपका फाइनेंस असिस्टेंट तैयार है।`;
     }
 
     speakAssistantResponse(sampleText, targetLang, null, personaId);
@@ -245,7 +251,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateDisplayLabel() {
       if (!displayEl) return;
-      const persona = PERSONA_CONFIGS[selectedPersona] || PERSONA_CONFIGS.ravi;
+      const persona = getPersonaConfig(selectedPersona);
       const langLabel = selectedLanguage === 'ta-IN' ? '🪔 Tamil' : (selectedLanguage === 'hi-IN' ? '🇮🇳 Hindi' : (selectedLanguage === 'en-IN' ? '🇮🇳 English' : '🌐 Auto Detect'));
       displayEl.textContent = `${persona.emoji} ${persona.name} (${persona.desc}) • ${langLabel}`;
     }
@@ -871,7 +877,8 @@ document.addEventListener('DOMContentLoaded', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: finalText,
-          userId: currentUserId
+          userId: currentUserId,
+          language: selectedLanguage
         })
       });
 
@@ -1008,6 +1015,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // -------------------------------------------------------
   // TEXT-TO-SPEECH — Dynamic Voice Persona & Auto Language
   // -------------------------------------------------------
+  // -------------------------------------------------------
+  // TEXT-TO-SPEECH — Dynamic Voice Persona & Auto Language
+  // -------------------------------------------------------
   function speakAssistantResponse(text, lang, onEndCallback, personaId = selectedPersona) {
     // Support legacy 2-arg calls: speakAssistantResponse(text, callback)
     if (typeof lang === 'function') { onEndCallback = lang; lang = detectedLang; }
@@ -1022,31 +1032,66 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    window.speechSynthesis.cancel();
+    try {
+      window.speechSynthesis.cancel();
+    } catch (_) {}
 
-    const persona = PERSONA_CONFIGS[personaId] || PERSONA_CONFIGS[selectedPersona] || PERSONA_CONFIGS.ravi;
+    const persona = getPersonaConfig(personaId || selectedPersona);
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate   = persona.rate || 1.25;
-    utterance.pitch  = persona.pitch || 0.88;
+    let cleanText = text
+      .replace(/₹\s*(\d+(?:[.,]\d+)?)/g, lang.startsWith('ta') ? '$1 ரூபாய்' : (lang.startsWith('hi') ? '$1 रुपये' : '₹$1'))
+      .replace(/[*#`_~]/g, '')
+      .trim();
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.rate   = 1.0; // 1.0x rate
+    utterance.pitch  = persona.pitch || 1.0;
     utterance.volume = 1.0;
     utterance.lang   = lang;
 
     // Pick best voice for this language & persona automatically
     const voice = pickVoiceForLang(lang, personaId);
     if (voice) utterance.voice = voice;
-    console.log(`🔊 TTS → persona:${persona.name} | lang:${lang} | voice:${voice?.name} | text: ${text.slice(0,60)}...`);
+    console.log(`🔊 TTS → persona:${persona.name} | lang:${lang} | voice:${voice?.name || 'default'} | text: ${text.slice(0,60)}...`);
 
-    // Chrome keep-alive workaround for long utterances
-    const keepAlive = setInterval(() => {
+    let hasEnded = false;
+    let keepAlive = null;
+    const finish = () => {
+      if (hasEnded) return;
+      hasEnded = true;
+      if (keepAlive) clearInterval(keepAlive);
+      if (onEndCallback) onEndCallback();
+    };
+
+    keepAlive = setInterval(() => {
       if (!window.speechSynthesis.speaking) { clearInterval(keepAlive); return; }
       window.speechSynthesis.pause();
       window.speechSynthesis.resume();
-    }, 10000);
-    utterance.onend   = () => { clearInterval(keepAlive); if (onEndCallback) onEndCallback(); };
-    utterance.onerror = (e) => { clearInterval(keepAlive); console.warn('TTS error:', e.error); if (onEndCallback) onEndCallback(); };
+    }, 6000);
 
-    window.speechSynthesis.speak(utterance);
+    utterance.onend = finish;
+    utterance.onerror = (e) => {
+      console.warn('TTS error:', e?.error, 'lang:', lang);
+      if (lang.startsWith('ta')) {
+        // Retry with base "ta" language without voice object lock
+        try {
+          const retryUtterance = new SpeechSynthesisUtterance(cleanText);
+          retryUtterance.rate = 1.0;
+          retryUtterance.pitch = persona.pitch || 1.0;
+          retryUtterance.lang = 'ta';
+          retryUtterance.onend = finish;
+          retryUtterance.onerror = finish;
+          window.speechSynthesis.speak(retryUtterance);
+          return;
+        } catch (_) {}
+      }
+      finish();
+    };
+
+    // Slight delay to ensure cancel is completed
+    setTimeout(() => {
+      window.speechSynthesis.speak(utterance);
+    }, 50);
   }
 
   // Load Transactions from Backend

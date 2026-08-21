@@ -105,11 +105,12 @@ const createResult = await executeFirestoreCRUD('create', {
 assert('CREATE succeeds',            createResult.success === true, createResult);
 assert('CREATE returns docId',       Boolean(createResult.docId), createResult.docId);
 const createdDocId = createResult.docId;
+const mainDocId = createResult.mainTxId;
 
 // READ
 const allTx = await fetchAllTransactions(testUserId);
 assert('READ returns records',       allTx.length > 0, allTx.length);
-const createdTx = allTx.find(t => t.id === createdDocId);
+const createdTx = allTx.find(t => t.id === createdDocId || t.subCollectionDocId === createdDocId || t.id === mainDocId);
 assert('READ finds created record',  Boolean(createdTx), createdDocId);
 assert('READ amount correct',        createdTx?.amount === 780, createdTx?.amount);
 assert('READ type correct',          createdTx?.transaction_type === 'expense', createdTx?.transaction_type);
@@ -127,7 +128,7 @@ assert('UPDATE succeeds',            updateResult.success === true, updateResult
 
 // READ after update
 const allTxAfterUpdate = await fetchAllTransactions(testUserId);
-const updatedTx = allTxAfterUpdate.find(t => t.id === createdDocId);
+const updatedTx = allTxAfterUpdate.find(t => t.id === createdDocId || t.subCollectionDocId === createdDocId || t.id === mainDocId);
 assert('Amount updated to 850',      updatedTx?.amount === 850, updatedTx?.amount);
 
 // DELETE
@@ -140,7 +141,7 @@ assert('DELETE succeeds',            deleteResult.success === true, deleteResult
 
 // READ after delete
 const allTxAfterDelete = await fetchAllTransactions(testUserId);
-const deletedTx = allTxAfterDelete.find(t => t.id === createdDocId);
+const deletedTx = allTxAfterDelete.find(t => t.id === createdDocId || t.subCollectionDocId === createdDocId || t.id === mainDocId);
 assert('Record removed after DELETE', !deletedTx, deletedTx?.id);
 
 // ── SCENARIO 8: Multi-type CRUD ───────────────────────────────────────────────

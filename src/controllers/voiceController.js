@@ -23,7 +23,7 @@ export function ledgerEventsStream(req, res) {
 export async function processAudio(req, res) {
   try {
     const file = req.file;
-    const { audioBase64, userId = 'default_user', model = 'A', autoCommit = false, customTaxonomy } = req.body;
+    const { audioBase64, userId = 'default_user', model = 'B', autoCommit = true, customTaxonomy, language } = req.body;
 
     if (!file && !audioBase64) {
       return res.status(400).json({
@@ -35,13 +35,23 @@ export async function processAudio(req, res) {
     const sttResult = await transcribeAudio({ file, audioBase64 });
     const rawTranscript = sttResult.transcript;
 
+    const detectedLang = (language && language !== 'auto') ? language : detectLanguage(rawTranscript || '');
+
     if (!rawTranscript) {
-      const friendlyHelp = sttResult.error || "I couldn't catch that clearly. Please try speaking again or type your expense!";
+      const friendlyHelp = sttResult.error || (
+        detectedLang === 'ta-IN'
+          ? "குரல் சரியாக கேட்கவில்லை. மீண்டும் பேசவும் அல்லது உள்ளிடவும்!"
+          : (detectedLang === 'hi-IN'
+              ? "आपकी आवाज़ स्पष्ट नहीं सुनाई दी। कृपया दोबारा बोलें!"
+              : "I couldn't catch that clearly. Please try speaking again or type your expense!")
+      );
       return res.status(200).json({
         requires_clarification: true,
         missing_fields: ['amount', 'category'],
         raw_transcript: null,
+        detected_language: detectedLang,
         stt_provider: sttResult.stt_provider,
+        spokenResponse: friendlyHelp,
         confirmation_spoken: friendlyHelp,
         follow_up_question: friendlyHelp
       });
@@ -52,29 +62,42 @@ export async function processAudio(req, res) {
 
     // 3. Handle Model A vs Model B
     let dbResult = null;
-    let confirmationMessage = generateConfirmationText(parsedData);
+    let confirmationMessage = '';
 
     if (parsedData.missing_fields && parsedData.missing_fields.length > 0) {
-      confirmationMessage = generateFollowUpQuestion(parsedData);
-    } else if (model.toUpperCase() === 'B' || autoCommit) {
-      dbResult = await executeFirestoreCRUD('create', parsedData, userId);
-      // Ingest into RAG
-      try {
-        await ingestTextForRag({
-          userId,
-          text: `${parsedData.transaction_type} of ₹${parsedData.amount} for ${parsedData.category} on ${parsedData.date}. Notes: ${parsedData.notes}`
-        });
-      } catch (e) {
-        // ignore rag error
+      confirmationMessage = generateLocalizedFollowUp(parsedData, detectedLang);
+    } else {
+      confirmationMessage = generateLocalizedSpokenResponse({
+        action: 'create',
+        parsedData,
+        lang: detectedLang
+      });
+
+      if (model.toUpperCase() === 'B' || autoCommit) {
+        dbResult = await executeFirestoreCRUD('create', parsedData, userId);
+        // Ingest into RAG
+        try {
+          await ingestTextForRag({
+            userId,
+            text: `${parsedData.transaction_type} of ₹${parsedData.amount} for ${parsedData.category} on ${parsedData.date}. Notes: ${parsedData.notes}`
+          });
+        } catch (e) {
+          // ignore rag error
+        }
       }
     }
 
     return res.status(200).json({
+      success: true,
       raw_transcript: rawTranscript,
       stt_provider: sttResult.stt_provider,
+      detected_language: detectedLang,
+      spokenResponse: confirmationMessage,
+      confirmation_spoken: confirmationMessage,
+      follow_up_question: confirmationMessage,
+      parsedData,
       ...parsedData,
       model_used: model.toUpperCase(),
-      confirmation_spoken: confirmationMessage,
       db_execution: dbResult
     });
   } catch (error) {
@@ -391,8 +414,8 @@ export async function conversationalAgent(req, res) {
       return res.status(400).json({ success: false, error: 'text is required' });
     }
 
-    // Auto-detect language (Tamil, Hindi, English, or mixed)
-    const detectedLang = req.body.language || detectLanguage(text);
+    // Auto-detect or use user-selected language (Tamil, Hindi, English, or mixed)
+    const detectedLang = (req.body.language && req.body.language !== 'auto') ? req.body.language : detectLanguage(text);
     const lower = text.toLowerCase().trim();
 
     // Detect User Intent: DELETE, UPDATE, QUERY/READ, RAG_SUMMARY, or CREATE

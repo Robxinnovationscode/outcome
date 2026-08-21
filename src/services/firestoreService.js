@@ -285,14 +285,49 @@ export async function executeFirestoreCRUD(operation, data, userId = 'default_us
     }
 
     if (operation === 'update') {
+      const updateData = {
+        amount: payload.amount,
+        category: payload.category,
+        notes: payload.notes,
+        updatedAt: new Date()
+      };
+
       if (data.docId) {
-        const docRef = db.collection(path).doc(data.docId);
-        await docRef.update({
-          amount: payload.amount,
-          category: payload.category,
-          notes: payload.notes,
-          updatedAt: new Date()
-        });
+        try {
+          const docRef = db.collection(path).doc(data.docId);
+          await docRef.update(updateData);
+        } catch (e) {
+          // ignore if only in transactions
+        }
+
+        // Also update in users/{userId}/transactions
+        try {
+          const mainSnap = await db.collection(`users/${userId}/transactions`)
+            .where('subCollectionDocId', '==', data.docId)
+            .get();
+          if (!mainSnap.empty) {
+            for (const d of mainSnap.docs) {
+              await d.ref.update({
+                name: payload.category || 'Transaction',
+                amount: payload.amount,
+                category: payload.category,
+                notes: payload.notes,
+                updatedAt: new Date()
+              });
+            }
+          } else {
+            const mainTxRef = db.collection(`users/${userId}/transactions`).doc(data.docId);
+            await mainTxRef.update({
+              name: payload.category || 'Transaction',
+              amount: payload.amount,
+              category: payload.category,
+              notes: payload.notes,
+              updatedAt: new Date()
+            });
+          }
+        } catch (_) {}
+
+        broadcastCrudEvent({ type: 'update', userId, collectionName, docId: data.docId });
         return {
           success: true,
           mode: 'live_firestore',
@@ -335,10 +370,26 @@ export async function executeFirestoreCRUD(operation, data, userId = 'default_us
 
     if (operation === 'delete') {
       if (data.docId) {
-        const docRef = db.collection(path).doc(data.docId);
-        const docSnap = await docRef.get();
-        const deletedData = docSnap.exists ? docSnap.data() : {};
-        await docRef.delete();
+        let deletedData = {};
+        try {
+          const docRef = db.collection(path).doc(data.docId);
+          const docSnap = await docRef.get();
+          if (docSnap.exists) deletedData = docSnap.data();
+          await docRef.delete();
+        } catch (_) {}
+
+        // Also delete from users/{userId}/transactions
+        try {
+          await db.collection(`users/${userId}/transactions`).doc(data.docId).delete();
+        } catch (_) {}
+        try {
+          const mainSnap = await db.collection(`users/${userId}/transactions`)
+            .where('subCollectionDocId', '==', data.docId)
+            .get();
+          mainSnap.forEach(d => d.ref.delete());
+        } catch (_) {}
+
+        broadcastCrudEvent({ type: 'delete', userId, collectionName, docId: data.docId });
         return {
           success: true,
           mode: 'live_firestore',
