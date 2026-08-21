@@ -694,9 +694,9 @@ document.addEventListener('DOMContentLoaded', () => {
       speechRecognizer = new SpeechRec();
       speechRecognizer.continuous = false;
       speechRecognizer.interimResults = false;
-      // Use en-IN as the STT capture lang — Chrome en-IN also picks up
-      // Hindi and Tamil transliterations (Tanglish/Hinglish) correctly.
-      speechRecognizer.lang = 'en-IN';
+      // Language follows user selection — supports Tamil (ta-IN), Hindi (hi-IN), English (en-IN)
+      // auto mode defaults to en-IN which also captures Tanglish/Hinglish
+      speechRecognizer.lang = (selectedLanguage && selectedLanguage !== 'auto') ? selectedLanguage : 'en-IN';
 
       speechRecognizer.onstart = () => {
         isRecognizing = true;
@@ -731,6 +731,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function startListeningTurn() {
     if (!speechRecognizer || isMuted) return;
+    // Dynamically update STT language on each turn to reflect current selection
+    if (speechRecognizer.lang !== undefined) {
+      speechRecognizer.lang = (selectedLanguage && selectedLanguage !== 'auto') ? selectedLanguage : 'en-IN';
+    }
     if (!isRecognizing) {
       try {
         speechRecognizer.start();
@@ -1015,9 +1019,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // -------------------------------------------------------
   // TEXT-TO-SPEECH — Dynamic Voice Persona & Auto Language
   // -------------------------------------------------------
-  // -------------------------------------------------------
-  // TEXT-TO-SPEECH — Dynamic Voice Persona & Auto Language
-  // -------------------------------------------------------
   function speakAssistantResponse(text, lang, onEndCallback, personaId = selectedPersona) {
     // Support legacy 2-arg calls: speakAssistantResponse(text, callback)
     if (typeof lang === 'function') { onEndCallback = lang; lang = detectedLang; }
@@ -1043,16 +1044,23 @@ document.addEventListener('DOMContentLoaded', () => {
       .replace(/[*#`_~]/g, '')
       .trim();
 
+    // Pick best voice for this language & persona
+    const voice = pickVoiceForLang(lang, personaId);
+    const allVoices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+
+    // If no Tamil/Hindi voice found, fall back to en-IN but keep the text
+    // (browser will still attempt to render the script; better than silent fail)
+    const effectiveLang = voice ? lang : 'en-IN';
+    const effectiveVoice = voice || (allVoices.find(v => v.lang === 'en-IN') || allVoices.find(v => v.lang.startsWith('en')) || null);
+
     const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.rate   = 1.0; // 1.0x rate
+    utterance.rate   = 1.0;
     utterance.pitch  = persona.pitch || 1.0;
     utterance.volume = 1.0;
-    utterance.lang   = lang;
+    utterance.lang   = effectiveLang;
+    if (effectiveVoice) utterance.voice = effectiveVoice;
 
-    // Pick best voice for this language & persona automatically
-    const voice = pickVoiceForLang(lang, personaId);
-    if (voice) utterance.voice = voice;
-    console.log(`🔊 TTS → persona:${persona.name} | lang:${lang} | voice:${voice?.name || 'default'} | text: ${text.slice(0,60)}...`);
+    console.log(`🔊 TTS → persona:${persona.name} | lang:${lang}→${effectiveLang} | voice:${effectiveVoice?.name || 'browser-default'} | text: ${text.slice(0,60)}...`);
 
     let hasEnded = false;
     let keepAlive = null;
@@ -1071,27 +1079,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     utterance.onend = finish;
     utterance.onerror = (e) => {
-      console.warn('TTS error:', e?.error, 'lang:', lang);
-      if (lang.startsWith('ta')) {
-        // Retry with base "ta" language without voice object lock
-        try {
-          const retryUtterance = new SpeechSynthesisUtterance(cleanText);
-          retryUtterance.rate = 1.0;
-          retryUtterance.pitch = persona.pitch || 1.0;
-          retryUtterance.lang = 'ta';
-          retryUtterance.onend = finish;
-          retryUtterance.onerror = finish;
-          window.speechSynthesis.speak(retryUtterance);
-          return;
-        } catch (_) {}
-      }
-      finish();
+      console.warn('TTS error:', e?.error, '| lang:', effectiveLang, '| voice:', effectiveVoice?.name);
+      // Last-resort retry: no voice assignment, let browser auto-pick
+      try {
+        const retryUtterance = new SpeechSynthesisUtterance(cleanText);
+        retryUtterance.rate = 1.0;
+        retryUtterance.pitch = persona.pitch || 1.0;
+        retryUtterance.lang = lang.startsWith('ta') ? 'ta' : effectiveLang;
+        retryUtterance.onend = finish;
+        retryUtterance.onerror = finish;
+        window.speechSynthesis.speak(retryUtterance);
+      } catch (_) { finish(); }
     };
 
-    // Slight delay to ensure cancel is completed
+    // 80ms delay to ensure speechSynthesis.cancel() has settled
     setTimeout(() => {
       window.speechSynthesis.speak(utterance);
-    }, 50);
+    }, 80);
   }
 
   // Load Transactions from Backend
