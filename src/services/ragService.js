@@ -72,7 +72,15 @@ export async function queryRag({ userId = 'default_user', query = '', k = 4 }) {
   const results = await queryTopK({ userId, queryEmbedding: qEmb, k });
   const contextText = results.results.map(r => `- ${r.text}`).join('\n');
 
-  const prompt = `You are a helpful personal finance AI assistant. Answer the user question based on their transaction history below. If no history is found, give a polite answer.\n\nTransactions:\n${contextText || 'No previous transactions found.'}\n\nUser Question: ${query}`;
+  const prompt = `You are an expert Personal Finance and Investment AI Advisor for LigthsON. Answer the user's question clearly, concisely, and actionably.
+If the question is about investments, portfolio allocation, mutual funds, stocks, FD/RD, savings, or FIRE planning, provide structured, friendly guidance.
+
+User's Financial Context:
+${contextText || 'No recorded history available.'}
+
+User Question: ${query}
+
+Provide a helpful, direct 2-3 paragraph answer with bullet points if appropriate.`;
   const summary = await callLLM(prompt, 512);
   return { results: results.results, summary, answer: summary };
 }

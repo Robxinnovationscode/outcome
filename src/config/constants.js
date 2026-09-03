@@ -5,34 +5,58 @@
 
 export const CATEGORY_TAXONOMY = {
   income: [
-    'Salary',
-    'Freelance',
-    'Business',
-    'Interest',
-    'Gift',
-    'Refund',
-    'Other'
+    'Active',
+    'Passive'
   ],
   expense: [
-    'Groceries',
-    'Transport',
-    'Rent',
-    'Utilities',
-    'Food & Dining',
-    'Entertainment',
-    'Healthcare',
-    'Shopping',
-    'Other'
+    'Essential',
+    'Mandatory',
+    'Discretionary'
   ],
   investment: [
-    'Mutual Fund SIP',
+    'Mutual Fund',
     'Stocks',
     'Fixed Deposit',
+    'Recurring Deposit',
+    'Savings',
     'Gold',
-    'PPF/EPF',
-    'Crypto',
     'Other'
   ]
+};
+
+// Detailed sub-items under each primary classification
+export const CATEGORY_SUBITEMS = {
+  expense: {
+    Essential: [
+      'Groceries', 'Child care', 'Clothing', 'Education', 'Emergency Fund',
+      'Fuel - Cooking', 'Fuel - Vehicles', 'Home care', 'Medical Care',
+      'Personal grooming', 'Pet care', 'Rents / Mortgage', 'Transportation',
+      'Utilities - Electricity', 'Utilities - Gas', 'Utilities - Phone(s)',
+      'Utilities - TV / Internet', 'Utilities - Water', 'Utilities Maintenance cost',
+      'Vehicle Maintenance cost', 'Miscellaneous'
+    ],
+    Mandatory: [
+      'EMI - Education', 'EMI - Personal', 'EMI - Property', 'EMI - Vehicle',
+      'Fees & Charges - Consultation', 'Insurance - Fire', 'Insurance - Health',
+      'Insurance - Life (Term / Pension / Moneyback)', 'Insurance - Property',
+      'Insurance - Travel', 'Insurance - Vehicle', 'Loan Repayment',
+      'PPF/VPF - Retirement fund', 'Tax - Income', 'Tax - utilities'
+    ],
+    Discretionary: [
+      'Food Dining', 'Charitable donations', 'Fun / Entertainment', 'Gifts',
+      'Home Décor', 'Luxury clothing / Jewelery', 'Sports items',
+      'Subscriptions / dues', 'Tours & travel', 'Vehicle Purchase', 'Shopping'
+    ]
+  },
+  income: {
+    Active: [
+      'Salary', 'Freelancing', 'Bonuses', 'Loans', 'Refunds/Reimbursements', 'Wages', 'Stipend'
+    ],
+    Passive: [
+      'Capital gains', 'Dividends', 'Financial Aid', 'Income - Business',
+      'Income - Chit', 'Income - Interest', 'Rental Income'
+    ]
+  }
 };
 
 export const TRANSACTION_TYPES = ['income', 'expense', 'investment'];
@@ -49,112 +73,87 @@ export const SUPPORTED_LANGUAGES = [
 ];
 
 // Synonyms and Keyword Mappings for Indian Context (English, Tamil, Tanglish, Hindi, Hinglish)
+// Directly maps keywords to the standardized primary category
 export const CATEGORY_SYNONYMS = {
   expense: {
-    Groceries: [
+    Essential: [
       'grocery', 'groceries', 'sabzi', 'kirana', 'supermarket', 'd-mart', 'blinkit', 'zepto', 'instamart',
       'vegetables', 'milk', 'doodh', 'ration', 'maligai', 'kadai', 'kaaikari', 'pal', 'thayir', 'arisi', 'paruppu',
-      // Tamil script
-      'மளிகை', 'காய்கறி', 'பால்', 'தயிர்', 'அரிசி', 'பருப்பு', 'கடை', 'மளிகைக்கடை',
-      // Hindi script
-      'सब्ज़ी', 'सब्जी', 'दूध', 'किराना', 'राशन', 'दही', 'चावल', 'दाल'
-    ],
-    Transport: [
-      'auto', 'cab', 'uber', 'ola', 'rapido', 'metro', 'bus', 'fare', 'fuel', 'petrol', 'diesel',
-      'parking', 'toll', 'rickshaw', 'travel', 'flight', 'vandi', 'share auto', 'train', 'ticket',
-      // Tamil script
-      'வண்டி', 'ஆட்டோ', 'பேருந்து', 'ரயில்', 'பெட்ரோல்', 'டீசல்', 'பயணம்',
-      // Hindi script
-      'ऑटो', 'गाड़ी', 'गाड़ी', 'किराया', 'पेट्रोल', 'डीजल', 'बस', 'ट्रेन'
-    ],
-    Rent: [
-      'room rent', 'house rent', 'flat rent', 'monthly rent', 'pg rent', 'vaadagai', 'veetu vaadagai', 'kiraya',
-      // Tamil script
-      'வாடகை', 'வீட்டு வாடகை',
-      // Hindi script
-      'किराया', 'घर का किराया', 'मकान किराया'
-    ],
-    Utilities: [
       'electricity', 'bijli', 'water bill', 'gas', 'cylinder', 'wifi', 'internet', 'broadband',
       'recharge', 'mobile bill', 'maid', 'cook', 'current bill', 'eb bill', 'power bill',
+      'room rent', 'house rent', 'flat rent', 'monthly rent', 'pg rent', 'vaadagai', 'veetu vaadagai', 'kiraya',
+      'auto', 'cab', 'uber', 'ola', 'rapido', 'metro', 'bus', 'fare', 'fuel', 'petrol', 'diesel',
+      'doctor', 'hospital', 'medicine', 'dawa', 'pharmacy', 'clinic', 'medical', 'lab test', 'tablet', 'checkup',
+      'child care', 'school', 'education', 'fees', 'essential',
       // Tamil script
-      'மின்சாரம்', 'மின்சார கட்டணம்', 'தண்ணீர்', 'கேஸ்', 'ரீசார்ஜ்',
+      'மளிகை', 'காய்கறி', 'பால்', 'தயிர்', 'அரிசி', 'பருப்பு', 'வாடகை', 'மின்சாரம்', 'தண்ணீர்', 'கேஸ்',
+      'மருந்து', 'மருத்துவமனை', 'டாக்டர்', 'மாத்திரை', 'பெட்ரோல்', 'டீசல்',
       // Hindi script
-      'बिजली', 'पानी का बिल', 'गैस', 'सिलेंडर', 'रिचार्ज'
+      'सब्ज़ी', 'सब्जी', 'दूध', 'किराना', 'राशन', 'किराया', 'बिजली', 'पानी का बिल', 'गैस', 'दवा', 'अस्पताल', 'पेट्रोल'
     ],
-    'Food & Dining': [
+    Mandatory: [
+      'emi', 'loan', 'loan repayment', 'home loan', 'car loan', 'personal loan',
+      'insurance', 'lic', 'term insurance', 'health insurance', 'life insurance', 'vehicle insurance',
+      'tax', 'income tax', 'tds', 'property tax', 'gst', 'ppf', 'vpf', 'epf', 'pf', 'pension',
+      // Tamil script
+      'கடன்', 'வரி', 'காப்பீடு', 'இன்சூரன்ஸ்',
+      // Hindi script
+      'कर्ज', 'किस्त', 'ईएमआई', 'बीमा', 'टैक्स'
+    ],
+    Discretionary: [
       'food', 'dining', 'restaurant', 'zomato', 'swiggy', 'lunch', 'dinner', 'breakfast', 'khana',
       'chai', 'coffee', 'cafe', 'snacks', 'pizza', 'burger', 'saapadu', 'tiffin', 'hotel', 'biryani', 'canteen',
+      'movie', 'cinema', 'netflix', 'prime', 'hotstar', 'game', 'gaming', 'concert', 'event', 'party', 'fun', 'padam', 'theatre', 'ott', 'show',
+      'clothes', 'shopping', 'amazon', 'flipkart', 'myntra', 'shoes', 'electronics', 'dress', 'mall', 'purchase',
+      'luxury', 'jewellery', 'gold purchase', 'travel', 'trip', 'vacation', 'resort', 'tour', 'gift', 'donation',
       // Tamil script
-      'சாப்பாடு', 'டிபன்', 'ஹோட்டல்', 'உணவு', 'பிரியாணி', 'காபி', 'தேநீர்',
+      'சாப்பாடு', 'உணவு', 'பிரியாணி', 'காபி', 'படம்', 'திரைப்படம்', 'சினிமா', 'துணி', 'ஷாப்பிங்', 'சுற்றுலா',
       // Hindi script
-      'खाना', 'नाश्ता', 'होटल', 'बिरयानी', 'चाय', 'कॉफ़ी', 'कॉफी'
-    ],
-    Entertainment: [
-      'movie', 'cinema', 'netflix', 'prime', 'hotstar', 'game', 'gaming', 'concert', 'event',
-      'party', 'fun', 'padam', 'theatre', 'ott', 'show',
-      // Tamil script
-      'படம்', 'திரைப்படம்', 'சினிமா', 'நாடகம்',
-      // Hindi script
-      'फिल्म', 'सिनेमा', 'मूवी', 'नाटक'
-    ],
-    Healthcare: [
-      'doctor', 'hospital', 'medicine', 'dawa', 'pharmacy', 'clinic', 'medical', 'lab test',
-      'health insurance', 'marunthu', 'maruthuvamani', 'tablet', 'checkup',
-      // Tamil script
-      'மருந்து', 'மருத்துவமனை', 'டாக்டர்', 'மாத்திரை',
-      // Hindi script
-      'दवा', 'दवाई', 'अस्पताल', 'डॉक्टर', 'इलाज'
-    ],
-    Shopping: [
-      'clothes', 'shopping', 'amazon', 'flipkart', 'myntra', 'shoes', 'electronics', 'dress',
-      'mall', 'purchase', 'thuni', 'pant', 'shirt', 'saree',
-      // Tamil script
-      'துணி', 'புடவை', 'ஆடை', 'ஷாப்பிங்',
-      // Hindi script
-      'कपड़े', 'कपड़ा', 'खरीदारी', 'शॉपिंग', 'साड़ी'
+      'खाना', 'नाश्ता', 'होटल', 'बिरयानी', 'सिनेमा', 'मूवी', 'शॉपिंग', 'कपड़े', 'घूमना', 'पार्टी'
     ]
   },
   income: {
-    Salary: [
+    Active: [
       'salary', 'paycheck', 'monthly pay', 'stipend', 'wages', 'credited salary', 'sambalam',
-      'tankhwah', 'vetan', 'சம்பளம்', 'மாதச் சம்பளம்', 'तनख्वाह', 'वेतन'
+      'tankhwah', 'vetan', 'freelance', 'client project', 'contract', 'gig', 'upwork', 'fiverr',
+      'bonus', 'incentive', 'commission', 'refund', 'reimbursement', 'cashback',
+      // Tamil script
+      'சம்பளம்', 'மாதச் சம்பளம்', 'கூலி',
+      // Hindi script
+      'तनख्वाह', 'वेतन', 'मजदूरी', 'बोनस'
     ],
-    Freelance: [
-      'freelance', 'client project', 'contract', 'gig', 'upwork', 'fiverr', 'project work'
-    ],
-    Business: [
-      'business', 'store sale', 'revenue', 'profit', 'shop sales', 'vyapar', 'thozhil', 'வியாபாரம்', 'தொழில்', 'व्यापार'
-    ],
-    Interest: [
-      'interest', 'fd interest', 'bank interest', 'savings interest', 'dividend', 'vaddi', 'வட்டி', 'ब्याज'
-    ],
-    Gift: [
-      'gift', 'shagun', 'birthday gift', 'reward', 'cashback', 'anbilippu', 'பரிசு', 'तोहफा', 'शगुन'
-    ],
-    Refund: [
-      'refund', 'reimbursement', 'returned money', 'cashback', 'thirumba vanthathu', 'திரும்ப வந்தது', 'वापसी'
+    Passive: [
+      'interest', 'fd interest', 'bank interest', 'savings interest', 'dividend', 'dividends',
+      'capital gains', 'stock profit', 'rent received', 'rental income', 'business profit',
+      'store sale', 'revenue', 'chit', 'seetu', 'financial aid', 'vaddi',
+      // Tamil script
+      'வட்டி', 'வியாபாரம்', 'தொழில்', 'பங்கு லாபம்',
+      // Hindi script
+      'ब्याज', 'व्यापार', 'मुनाफा', 'डिविडेंड', 'किराया मिला'
     ]
   },
   investment: {
-    'Mutual Fund SIP': [
-      'sip', 'mutual fund', 'mf', 'systematic investment', 'zerodha coin', 'groww', 'kuvera', 'fund'
+    'Mutual Fund': [
+      'sip', 'mutual fund', 'mf', 'systematic investment', 'zerodha coin', 'groww', 'kuvera', 'index fund'
     ],
     Stocks: [
       'stock', 'stocks', 'share', 'shares', 'equity', 'zerodha', 'groww', 'upstox', 'angel one',
       'pangu', 'share market', 'பங்கு', 'பங்குச்சந்தை', 'शेयर'
     ],
     'Fixed Deposit': [
-      'fd', 'fixed deposit', 'term deposit', 'rd', 'recurring deposit'
+      'fd', 'fixed deposit', 'term deposit'
+    ],
+    'Recurring Deposit': [
+      'rd', 'recurring deposit'
+    ],
+    Savings: [
+      'savings', 'savings account', 'emergency savings'
     ],
     Gold: [
-      'gold', 'sovereign gold bond', 'sgb', 'digital gold', 'jewellery', 'thangam', 'sona', 'தங்கம்', 'சோனா', 'सोना'
+      'gold', 'sovereign gold bond', 'sgb', 'digital gold', 'jewellery', 'thangam', 'sona', 'தங்கம்', 'सोना'
     ],
-    'PPF/EPF': [
-      'ppf', 'epf', 'pf', 'provident fund', 'nps', 'pension', 'cheetu', 'seetu', 'சீட்டு'
-    ],
-    Crypto: [
-      'crypto', 'bitcoin', 'btc', 'ethereum', 'eth', 'usdt', 'wazirx', 'coindcx'
+    Other: [
+      'crypto', 'bitcoin', 'btc', 'ppf', 'nps', 'pension', 'cheetu', 'seetu'
     ]
   }
 };

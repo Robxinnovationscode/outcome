@@ -388,8 +388,12 @@
           </select>
         </div>
         <div class="form-group">
-          <label for="modal-category">Category:</label>
-          <input type="text" id="modal-category" placeholder="e.g. Groceries, Salary, Stocks" required>
+          <label for="modal-category">Category (Sub-Type):</label>
+          <select id="modal-category" required>
+            <option value="Essential">Essential</option>
+            <option value="Mandatory">Mandatory</option>
+            <option value="Discretionary">Discretionary</option>
+          </select>
         </div>
         <div class="form-group">
           <label for="modal-amount">Amount (INR):</label>

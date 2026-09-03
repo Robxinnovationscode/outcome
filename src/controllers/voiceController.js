@@ -3,7 +3,7 @@ import { parseUtterance } from '../services/nluEngine.js';
 import { sessionManager } from '../services/sessionManager.js';
 import { executeFirestoreCRUD, fetchAllTransactions, registerSseClient, getFirestoreMode } from '../services/firestoreService.js';
 import { createParticipantToken, getLiveKitUrl } from '../services/livekitTokenService.js';
-import { CATEGORY_TAXONOMY, DEFAULT_CONFIDENCE_THRESHOLD } from '../config/constants.js';
+import { CATEGORY_TAXONOMY, CATEGORY_SUBITEMS, DEFAULT_CONFIDENCE_THRESHOLD } from '../config/constants.js';
 import { ingestTextForRag, queryRag, summarizeFullHistory, callLLM } from '../services/ragService.js';
 import { detectLanguage, generateLocalizedSpokenResponse, generateLocalizedFollowUp } from '../services/languageService.js';
 
@@ -329,7 +329,8 @@ export async function deleteTransactionDirect(req, res) {
  */
 export function getCategories(req, res) {
   return res.status(200).json({
-    taxonomy: CATEGORY_TAXONOMY
+    taxonomy: CATEGORY_TAXONOMY,
+    subitems: CATEGORY_SUBITEMS
   });
 }
 

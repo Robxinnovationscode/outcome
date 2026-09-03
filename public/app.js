@@ -1241,11 +1241,31 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Modal Handlers
+  const modalCategoryOptions = {
+    expense: ['Essential', 'Mandatory', 'Discretionary'],
+    income: ['Active', 'Passive'],
+    investment: ['Mutual Fund', 'Stocks', 'Fixed Deposit', 'Recurring Deposit', 'Savings', 'Gold', 'Other']
+  };
+
+  function refreshCategoryOptions(type, currentVal = '') {
+    const list = modalCategoryOptions[type] || modalCategoryOptions.expense;
+    modalCategory.innerHTML = list
+      .map(cat => `<option value="${cat}" ${cat.toLowerCase() === (currentVal || '').toLowerCase() ? 'selected' : ''}>${cat}</option>`)
+      .join('');
+    if (!currentVal && list.length > 0) {
+      modalCategory.value = list[0];
+    }
+  }
+
+  modalType.addEventListener('change', () => {
+    refreshCategoryOptions(modalType.value);
+  });
+
   manualAddBtn.addEventListener('click', () => {
     modalTitle.textContent = 'Add Transaction';
     modalDocId.value = '';
     modalType.value = 'expense';
-    modalCategory.value = '';
+    refreshCategoryOptions('expense');
     modalAmount.value = '';
     modalDate.value = new Date().toISOString().split('T')[0];
     modalNotes.value = '';
@@ -1256,7 +1276,7 @@ document.addEventListener('DOMContentLoaded', () => {
     modalTitle.textContent = 'Edit Transaction';
     modalDocId.value = tx.id;
     modalType.value = tx.transaction_type;
-    modalCategory.value = tx.category || '';
+    refreshCategoryOptions(tx.transaction_type, tx.category || tx.subType);
     modalAmount.value = tx.amount || '';
     modalDate.value = tx.date || new Date().toISOString().split('T')[0];
     modalNotes.value = tx.notes || '';

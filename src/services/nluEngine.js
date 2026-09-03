@@ -288,6 +288,8 @@ Available Taxonomy Categories:
 
 Rules:
 1. Category must match one of the exact category names above, or null if unidentifiable.
+   - For Expense, MUST be one of: "Essential" (needs: groceries, rent, utilities/bills, medicines, transportation, children/school fees), "Mandatory" (obligations: EMI, loans, insurance, taxes, PF), or "Discretionary" (wants: dining out, shopping, movies/entertainment, leisure, luxury, gifts, travel).
+   - For Income, MUST be one of: "Active" (effort-based: salary, stipend, freelancing, wages, bonus) or "Passive" (investment/asset-based: dividends, interest, rent received, business profit, capital gains).
 2. If amount is mentioned (e.g., 500 rooba, ₹500, 500 ரூபாய், 500 rupaye), extract the numerical value.
 3. If the user said words like 'selavu', 'kharcha', 'paid', 'spent', 'kuduthen', set transaction_type to 'expense'.
 4. If missing_fields has items, list them (e.g. ["category"] or ["amount"]).

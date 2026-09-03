@@ -109,13 +109,50 @@ function getOrCreateUserStore(userId) {
  * - users/{userId}/expenses
  * - users/{userId}/investments
  */
+export function normalizeSubType(type, category, notes = '') {
+  const normType = (type || '').toLowerCase();
+  const text = `${category || ''} ${notes || ''}`.toLowerCase();
+
+  if (normType === 'income') {
+    if (category === 'Passive' || category === 'Active') return category;
+    if (/\b(passive|dividend|dividends|interest|rental|rent received|capital gains|chit|seetu|business profit|store sale)\b/i.test(text)) {
+      return 'Passive';
+    }
+    return 'Active';
+  }
+
+  if (normType === 'expense') {
+    if (category === 'Mandatory' || category === 'Discretionary' || category === 'Essential') {
+      return category;
+    }
+    if (/\b(mandatory|emi|loan|insurance|lic|tax|taxes|ppf|vpf|epf|tuition fee)\b/i.test(text)) {
+      return 'Mandatory';
+    }
+    if (/\b(discretionary|dining|restaurant|food dining|entertainment|movie|cinema|shopping|luxury|travel|trip|gift|gifts|party|fun|clothes|dress)\b/i.test(text)) {
+      return 'Discretionary';
+    }
+    return 'Essential';
+  }
+
+  return category || 'Other';
+}
+
+/**
+ * Execute Firestore CRUD operations for Model B integration
+ * Collections:
+ * - users/{userId}/income
+ * - users/{userId}/expenses
+ * - users/{userId}/investments
+ */
 export async function executeFirestoreCRUD(operation, data, userId = 'default_user') {
   const collectionName = getCollectionName(data.transaction_type);
   const path = `users/${userId}/${collectionName}`;
 
+  const standardizedSubType = normalizeSubType(data.transaction_type, data.category, data.notes);
   const payload = {
     amount: typeof data.amount === 'number' ? data.amount : parseFloat(data.amount) || 0,
-    category: data.category || 'Other',
+    category: standardizedSubType,
+    subType: standardizedSubType,
     currency: data.currency || 'INR',
     date: data.date || new Date().toISOString().split('T')[0],
     notes: data.notes || '',
@@ -235,12 +272,44 @@ export async function executeFirestoreCRUD(operation, data, userId = 'default_us
       const mainTxPath = `users/${userId}/transactions`;
       let mainTxId = null;
       try {
+        const txType = data.transaction_type === 'income' ? 'Income' : (data.transaction_type === 'investment' ? 'Investment' : 'Expense');
+        
+        // Check for recent duplicate (same amount, type, and date within last 8 seconds) to prevent double entry
+        const recentDocs = await db.collection(mainTxPath)
+          .where('date', '==', payload.date)
+          .where('amount', '==', payload.amount)
+          .get();
+
+        let isDuplicate = false;
+        const nowMs = Date.now();
+        recentDocs.forEach(d => {
+          const itemData = d.data();
+          const createdMs = itemData.createdAt?.toDate ? itemData.createdAt.toDate().getTime() : (itemData.createdAt ? new Date(itemData.createdAt).getTime() : 0);
+          if (nowMs - createdMs < 8000 && itemData.type === txType) {
+            isDuplicate = true;
+            mainTxId = d.id;
+          }
+        });
+
+        if (isDuplicate) {
+          console.log(`⚠️ Prevented duplicate transaction creation for ${payload.date} ₹${payload.amount}`);
+          return {
+            success: true,
+            mode: 'live_firestore',
+            operation: 'create',
+            docId: docRef.id,
+            mainTxId: mainTxId,
+            data: payload,
+            duplicate_prevented: true
+          };
+        }
+
         const mainTxRef = await db.collection(mainTxPath).add({
-          name: payload.category || 'Transaction',
+          name: data.notes ? (data.notes.length > 30 ? data.notes.slice(0, 30) + '...' : data.notes) : payload.category,
           amount: payload.amount,
-          type: data.transaction_type === 'income' ? 'Income' : (data.transaction_type === 'investment' ? 'Investment' : 'Expense'),
-          subType: payload.category || 'General',
-          category: payload.category || 'General',
+          type: txType,
+          subType: payload.subType || payload.category,
+          category: payload.category,
           date: payload.date,
           notes: payload.notes || '',
           source: 'voice_agent',
