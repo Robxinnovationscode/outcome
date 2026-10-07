@@ -91,7 +91,7 @@ Parse text utterance without session state or DB side-effects.
 ## 4. 2-Step Confirmation & Commit (Section 4.4)
 **Endpoint:** `POST /api/voice/confirm-commit`
 
-Commit a previously confirmed transaction to Firestore.
+Commit a user-confirmed create, update, or delete operation. Create is idempotent when the same `requestId` is supplied again. Update and delete require an exact record ID; the API will not guess a record based on category or recency.
 
 ```json
 {
@@ -106,6 +106,18 @@ Commit a previously confirmed transaction to Firestore.
   "operation": "create"
 }
 ```
+
+### Update or Delete
+For `update` and `delete`, include the target document ID in `parsedData.recordId` (or the matching `transactionId`, `investmentId`, or `goalId`). The ID is scoped under the supplied user and the appropriate record collection.
+
+### Create a Goal
+Goals use `entityType: "goal"` and the existing user goals collection. A goal name is required; optional fields include `presentCost`, `years`, `inflation`, `returnRate`, `currentSip`, and `investmentType`.
+
+### Create an Investment
+Investment records use `transaction_type: "investment"` and preserve `investmentType`, `goalId`, `goalName`, `companyName`, and `symbol`. The backend writes the investment asset and its linked ledger transaction; update/delete keep the ledger mirror in sync.
+
+### Conversational Agent Commit Behavior
+`POST /api/voice/agent/conversation` and `/agent/process-audio` default to preview-only behavior (`model: "A"`, `autoCommit: false`). They return a parsed operation and require user confirmation; the client commits it through `/confirm-commit`. Direct automatic writes are only enabled when explicitly requested with `model: "B"` or `autoCommit: true`.
 
 ---
 
@@ -204,4 +216,3 @@ Request body:
 **Endpoint:** `POST /api/voice/agent/process-audio`
 
 Accepts multipart `audio` file or base64 `audioBase64`. Returns parsed result, optional DB commit result, and an assistant reply. TTS is not enabled by default; the assistant reply is returned as text.
-

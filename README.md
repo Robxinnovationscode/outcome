@@ -2,15 +2,15 @@
 
 This repository contains the complete **Voice-Enabled Transaction Agent API** backend service built for the **LigthsON** Personal Finance Application, fully complying with the **Vendor API Technical Requirements Specification**.
 
-It enables users to speak natural language financial transactions (e.g. *"Spent 500 rupees on groceries today"*, *"Add 20,000 salary credited"*, *"Invested 5000 in Mutual Fund SIP"*) and converts them into structured JSON data or directly updates **Firebase Firestore** collections (`users/{userId}/income`, `expenses`, `investments`).
+It enables users to speak natural language financial transactions (e.g. *"Spent 500 rupees on groceries today"*, *"Add 20,000 salary credited"*, *"Invested 5000 in Mutual Fund SIP"*) and converts them into structured JSON data or updates the mobile app's existing **Firebase Firestore** collections (`users/{userId}/transactions`, `investments`, and `goals`).
 
 ---
 
 ## 🌟 Key Capabilities & Compliance
 
 * **Integration Model Support:**
-  * **Model A (Voice + NLU Only):** Converts speech/text input into structured JSON conforming to Section 3.2 schema and returns it to the client.
-  * **Model B (Full Pipeline + Firestore CRUD):** Performs direct CRUD writes to Firestore with required audit tag (`source: "voice_agent"`) and server timestamps.
+  * **Model A (preview and confirm):** Converts speech/text input into structured data and waits for the client to confirm any write.
+  * **Model B (explicit auto-commit):** Performs CRUD only when the request explicitly selects Model B or sets `autoCommit: true`.
 * **Input Formats:** Accepts natural language text strings, base64 audio streams, or multipart audio files (`.wav`, `.m4a`, `.mp3`).
 * **Category Taxonomy Mapping:** Automatically maps Indian financial utterances and Hinglish terms into predefined categories:
   * **Income:** Salary, Freelance, Business, Interest, Gift, Refund, Other
@@ -20,11 +20,12 @@ It enables users to speak natural language financial transactions (e.g. *"Spent 
 * **Interactive Web Sandbox:** Features a built-in browser UI at `http://localhost:3000` to visually test microphone recording, text parsing, and API responses.
 
 * **Interactive LiveKit Voice Assistant:** Real-time WebRTC audio connection allowing hands-free voice conversations with animated audio visualizer and speech feedback.
-* **Conversational CRUD Operations:** Full database manipulation directly through speech dialog:
-  * **Create:** *"Spent 500 on groceries"* -> Logs expense to Firestore & ingests into RAG memory.
+* **Conversational CRUD Operations:** Create, read, update, and delete use the app's current Firestore collections:
+  * **Create:** Parses and previews a transaction; Firestore write happens once after confirmation.
   * **Read / Query:** *"What are my total expenses?"* -> Computes summaries & financial breakdown.
-  * **Update:** *"Update my grocery expense to 700"* -> Modifies existing record in ledger.
-  * **Delete:** *"Delete my last expense"* -> Removes record from Firestore with voice confirmation.
+  * **Update / Delete:** Requires an exact record ID and confirmation; ambiguous requests ask for clarification instead of changing the most recent matching record.
+  * **Investments:** Stores goal and company metadata and maintains one linked ledger entry without writing a duplicate expense/income record.
+  * **Goals:** Supports goal creation and edits in `users/{userId}/goals`; deletion is blocked while investments still reference the goal.
 * **RAG Financial Intelligence:** Semantic vector embeddings of user transactions providing instant multi-turn memory and holistic financial health analysis.
 * **Live Firestore Transactions Ledger:** Real-time visual dashboard synchronized with every voice turn.
 
@@ -50,6 +51,11 @@ Navigate to `http://localhost:3000` in your web browser to test the interactive 
 ### 4. Run Test Suite
 ```bash
 npm test
+```
+
+### Run focused CRUD regression tests
+```bash
+npm run test:crud
 ```
 
 ---

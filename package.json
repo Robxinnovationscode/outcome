@@ -8,6 +8,7 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node scripts/test-api.js",
+    "test:crud": "node --test scripts/test-voice-crud.test.js",
     "test:conv": "node scripts/test-conversational.js"
   },
   "keywords": [

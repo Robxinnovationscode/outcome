@@ -23,7 +23,7 @@ export function ledgerEventsStream(req, res) {
 export async function processAudio(req, res) {
   try {
     const file = req.file;
-    const { audioBase64, userId = 'default_user', model = 'B', autoCommit = true, customTaxonomy, language } = req.body;
+    const { audioBase64, userId = 'default_user', model = 'A', autoCommit = false, customTaxonomy, language } = req.body;
 
     if (!file && !audioBase64) {
       return res.status(400).json({
@@ -73,8 +73,11 @@ export async function processAudio(req, res) {
         lang: detectedLang
       });
 
-      if (model.toUpperCase() === 'B' || autoCommit) {
+      if (String(model).toUpperCase() === 'B' || autoCommit === true || String(autoCommit).toLowerCase() === 'true') {
         dbResult = await executeFirestoreCRUD('create', parsedData, userId);
+        if (!dbResult.success) {
+          return res.status(400).json({ success: false, error: dbResult.error, db_execution: dbResult });
+        }
         // Ingest into RAG
         try {
           await ingestTextForRag({
@@ -162,8 +165,11 @@ export async function processText(req, res) {
     const confirmationText = generateConfirmationText(parsedData);
 
     let dbResult = null;
-    if (model.toUpperCase() === 'B' || autoCommit) {
+    if (String(model).toUpperCase() === 'B' || autoCommit === true || String(autoCommit).toLowerCase() === 'true') {
       dbResult = await executeFirestoreCRUD('create', parsedData, userId);
+      if (!dbResult.success) {
+        return res.status(400).json({ success: false, error: dbResult.error, db_execution: dbResult });
+      }
       try {
         await ingestTextForRag({
           userId,
@@ -215,16 +221,35 @@ export async function parseOnly(req, res) {
  */
 export async function confirmCommit(req, res) {
   try {
-    const { parsedData, userId = 'default_user', operation = 'create' } = req.body;
-    if (!parsedData || !parsedData.transaction_type || !parsedData.amount) {
-      return res.status(400).json({ error: 'Valid parsedData object with transaction_type and amount is required.' });
+    const { parsedData, userId = req.user?.uid || 'default_user', operation = 'create' } = req.body;
+    if (!parsedData || typeof parsedData !== 'object' || Array.isArray(parsedData)) {
+      return res.status(400).json({ success: false, committed: false, error: 'parsedData must be a record object.' });
+    }
+    if (!['create', 'update', 'delete'].includes(operation)) {
+      return res.status(400).json({ success: false, committed: false, error: 'operation must be create, update, or delete.' });
     }
 
+    const isGoal = ['goal', 'goals'].includes(String(parsedData.entityType || parsedData.entity_type || '').toLowerCase());
+    if (operation === 'create' && !isGoal &&
+      (!parsedData.transaction_type || !Number.isFinite(Number(parsedData.amount)) || Number(parsedData.amount) <= 0)) {
+      return res.status(400).json({ success: false, committed: false, error: 'Create requires transaction_type and a positive amount.' });
+    }
     const result = await executeFirestoreCRUD(operation, parsedData, userId);
+    if (!result.success) {
+      const status = /not found/i.test(result.error || '') ? 404 : 400;
+      return res.status(status).json({
+        success: false,
+        committed: false,
+        operation,
+        error: result.error || 'The requested operation was not completed.',
+        db_execution: result
+      });
+    }
     return res.status(200).json({
+      success: true,
       committed: true,
       operation,
-      confirmation_message: `Successfully ${operation}d ${parsedData.transaction_type} of ₹${parsedData.amount} for ${parsedData.category}.`,
+      confirmation_message: `Successfully ${operation}d ${isGoal ? parsedData.name || parsedData.goalName : `${parsedData.transaction_type} of ₹${parsedData.amount}`}.`,
       db_execution: result
     });
   } catch (error) {
@@ -288,9 +313,10 @@ export async function listAllTransactions(req, res) {
  */
 export async function createTransactionDirect(req, res) {
   try {
-    const userId = req.body.userId || req.user?.uid || 'default_user';
+    const userId = req.user?.uid || req.body.userId || 'default_user';
     const result = await executeFirestoreCRUD('create', req.body, userId);
-    return res.status(200).json({ success: true, result });
+    if (!result.success) return res.status(400).json({ success: false, error: result.error, result });
+    return res.status(201).json({ success: true, result });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -302,8 +328,9 @@ export async function createTransactionDirect(req, res) {
 export async function updateTransactionDirect(req, res) {
   try {
     const { type, id } = req.params;
-    const userId = req.body.userId || req.user?.uid || 'default_user';
-    const result = await executeFirestoreCRUD('update', { transaction_type: type, docId: id, ...req.body }, userId);
+    const userId = req.user?.uid || req.body.userId || 'default_user';
+    const result = await executeFirestoreCRUD('update', { ...req.body, transaction_type: type, docId: id }, userId);
+    if (!result.success) return res.status(/not found/i.test(result.error || '') ? 404 : 400).json({ success: false, error: result.error, result });
     return res.status(200).json({ success: true, result });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -316,8 +343,9 @@ export async function updateTransactionDirect(req, res) {
 export async function deleteTransactionDirect(req, res) {
   try {
     const { type, id } = req.params;
-    const userId = req.query.userId || req.body?.userId || req.user?.uid || 'default_user';
+    const userId = req.user?.uid || req.query.userId || req.body?.userId || 'default_user';
     const result = await executeFirestoreCRUD('delete', { transaction_type: type, docId: id }, userId);
+    if (!result.success) return res.status(/not found/i.test(result.error || '') ? 404 : 400).json({ success: false, error: result.error, result });
     return res.status(200).json({ success: true, result });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -410,7 +438,7 @@ export async function ragFullSummary(req, res) {
  */
 export async function conversationalAgent(req, res) {
   try {
-    const { text, userId = 'default_user', sessionId } = req.body;
+    const { text, userId = req.user?.uid || 'default_user', sessionId, model = 'A', autoCommit = false } = req.body;
     if (!text || text.trim() === '') {
       return res.status(400).json({ success: false, error: 'text is required' });
     }
@@ -422,8 +450,11 @@ export async function conversationalAgent(req, res) {
     // Detect User Intent: DELETE, UPDATE, QUERY/READ, RAG_SUMMARY, or CREATE
     const isDelete = /\b(delete|remove|cancel|discard|erase|hatao|mitado|azhi|azhithuvidu|vendaam)\b/i.test(lower);
     const isUpdate = /\b(update|change|modify|correct|badlo|set|maathu|maathividu)\b/i.test(lower);
+    const isGoalRequest = /\b(goal|savings target|financial goal)\b/i.test(lower);
     const isQuery = /\b(what|how much|total|show|list|summary|spending|expenses|tell me|kitna|dekhao|kya|evvalavu|evlo|sollinga|kaatu)\b/i.test(lower);
     const isSummary = /\b(summary|overview|health|report|analysis|advice|motham|mothatham)\b/i.test(lower);
+    const shouldCommit = autoCommit === true || String(autoCommit).toLowerCase() === 'true' || String(model).toUpperCase() === 'B';
+    const requestedId = text.match(/\b(?:record|transaction|investment|goal)?\s*id\s*[:#]?\s*([A-Za-z0-9_-]{5,})\b/i)?.[1];
 
     let action_performed = 'create';
     let spokenResponse = '';
@@ -435,7 +466,20 @@ export async function conversationalAgent(req, res) {
     if (isDelete) {
       action_performed = 'delete';
       parsedData = await parseUtterance(text, {});
-      dbResult = await executeFirestoreCRUD('delete', parsedData, userId);
+      parsedData.entityType = isGoalRequest ? 'goal' : (parsedData.transaction_type === 'investment' ? 'investment' : 'transaction');
+      if (requestedId) parsedData.recordId = requestedId;
+      if (!parsedData.recordId) {
+        return res.status(200).json({
+          success: true,
+          action_performed,
+          requires_clarification: true,
+          detected_language: detectedLang,
+          missing_fields: ['recordId'],
+          spokenResponse: 'Please identify the exact record to delete. I will not guess which record you mean.',
+          parsedData
+        });
+      }
+      if (shouldCommit) dbResult = await executeFirestoreCRUD('delete', parsedData, userId);
       spokenResponse = generateLocalizedSpokenResponse({
         action: 'delete',
         parsedData,
@@ -446,7 +490,20 @@ export async function conversationalAgent(req, res) {
     else if (isUpdate) {
       action_performed = 'update';
       parsedData = await parseUtterance(text, {});
-      dbResult = await executeFirestoreCRUD('update', parsedData, userId);
+      parsedData.entityType = isGoalRequest ? 'goal' : (parsedData.transaction_type === 'investment' ? 'investment' : 'transaction');
+      if (requestedId) parsedData.recordId = requestedId;
+      if (!parsedData.recordId) {
+        return res.status(200).json({
+          success: true,
+          action_performed,
+          requires_clarification: true,
+          detected_language: detectedLang,
+          missing_fields: ['recordId'],
+          spokenResponse: 'Please identify the exact record to update. I will not guess which record you mean.',
+          parsedData
+        });
+      }
+      if (shouldCommit) dbResult = await executeFirestoreCRUD('update', parsedData, userId);
       spokenResponse = generateLocalizedSpokenResponse({
         action: 'update',
         parsedData,
@@ -481,9 +538,44 @@ export async function conversationalAgent(req, res) {
     else {
       action_performed = 'create';
       parsedData = await parseUtterance(text, {});
+      if (isGoalRequest) {
+        const goalName = extractGoalName(text);
+        if (!goalName) {
+          return res.status(200).json({
+            success: true,
+            action_performed: 'clarification_needed',
+            requires_clarification: true,
+            detected_language: detectedLang,
+            missing_fields: ['name'],
+            spokenResponse: 'What should I name this goal?',
+            parsedData: { entityType: 'goal' }
+          });
+        }
+        parsedData.entityType = 'goal';
+        parsedData.name = goalName;
+        parsedData.goalName = goalName;
+        if (parsedData.amount > 0) parsedData.presentCost = parsedData.amount;
+        parsedData.transaction_type = undefined;
+        parsedData.amount = undefined;
+      } else if (parsedData.transaction_type === 'investment') {
+        parsedData.entityType = 'investment';
+        if (!['other', 'general', ''].includes(String(parsedData.category || '').toLowerCase())) {
+          parsedData.investmentType = parsedData.investmentType || parsedData.category;
+        }
+        const goalsResult = await executeFirestoreCRUD('read', { entityType: 'goal' }, userId);
+        const matchedGoal = (goalsResult.records || []).find(goal =>
+          goal.name && lower.includes(String(goal.name).toLowerCase())
+        );
+        if (matchedGoal) {
+          parsedData.goalId = matchedGoal.id;
+          parsedData.goalName = matchedGoal.name;
+        }
+        const companyMatch = text.match(/\b(?:company|stock|shares?)\s+(?:of\s+)?([A-Z][A-Z0-9&.-]{1,12})\b/i);
+        if (companyMatch) parsedData.companyName = companyMatch[1];
+      }
 
       // Missing critical fields -> Ask clarification in detected language
-      if (parsedData.missing_fields && parsedData.missing_fields.length > 0) {
+      if (!isGoalRequest && parsedData.missing_fields && parsedData.missing_fields.length > 0) {
         const followUp = generateLocalizedFollowUp(parsedData, detectedLang);
         return res.status(200).json({
           success: true,
@@ -498,7 +590,7 @@ export async function conversationalAgent(req, res) {
       }
 
       // Guard: if NLU couldn't reliably parse key fields, ask for clarification
-      if (!parsedData.amount || parsedData.amount <= 0 || !parsedData.category || parsedData.category === 'Other') {
+      if (!isGoalRequest && (!parsedData.amount || parsedData.amount <= 0 || !parsedData.category || parsedData.category === 'Other')) {
         const followUp = generateLocalizedFollowUp(parsedData, detectedLang);
         return res.status(200).json({
           success: true,
@@ -512,23 +604,38 @@ export async function conversationalAgent(req, res) {
         });
       }
 
-      // Execute CRUD Create in Model B
-      dbResult = await executeFirestoreCRUD('create', parsedData, userId);
+      if (shouldCommit) dbResult = await executeFirestoreCRUD('create', {
+        ...parsedData,
+        requestId: req.body.requestId
+      }, userId);
 
-      // Ingest into RAG vector store
-      try {
-        await ingestTextForRag({
-          userId,
-          text: `${parsedData.transaction_type} of ₹${parsedData.amount} for ${parsedData.category} on ${parsedData.date}. Notes: ${parsedData.notes}`
-        });
-      } catch (e) {
-        // ignore
+      if (dbResult?.success && !dbResult.duplicate_prevented) {
+        try {
+          await ingestTextForRag({
+            userId,
+            sourceId: dbResult.docId,
+            text: isGoalRequest
+              ? `Financial goal ${parsedData.name}. Target ₹${parsedData.presentCost || 0}.`
+              : `${parsedData.transaction_type} of ₹${parsedData.amount} for ${parsedData.category} on ${parsedData.date}. Notes: ${parsedData.notes}`
+          });
+        } catch (error) {
+          console.warn('Could not update Voice Agent RAG index after commit:', error.message);
+        }
       }
 
       spokenResponse = generateLocalizedSpokenResponse({
         action: 'create',
         parsedData,
         lang: detectedLang
+      });
+    }
+
+    if (dbResult && !dbResult.success) {
+      return res.status(400).json({
+        success: false,
+        action_performed,
+        error: dbResult.error || `Voice Agent ${action_performed} operation failed.`,
+        db_execution: dbResult
       });
     }
 
@@ -542,6 +649,10 @@ export async function conversationalAgent(req, res) {
       spokenResponse,
       confirmation_spoken: spokenResponse,
       parsedData,
+      requires_confirmation: !dbResult?.success && action_performed !== 'query',
+      auto_committed: Boolean(dbResult?.success),
+      operation: action_performed,
+      db_execution: dbResult,
       dbResult,
       ragResult,
       transactions: updatedTransactions
@@ -639,6 +750,21 @@ export async function getDiag(req, res) {
 }
 
 // Helpers
+function extractGoalName(text) {
+  const normalized = String(text || '').trim();
+  const knownGoal = normalized.match(/\b(education|marriage|dream home|wealth creation|retirement|emergency fund)\b/i);
+  if (knownGoal) {
+    return knownGoal[1].replace(/\b\w/g, letter => letter.toUpperCase());
+  }
+
+  const match = normalized.match(/\bgoal\s+(?:for\s+)?(.+?)(?=\s+(?:with|of|for|in|within)\s+(?:₹|rs\.?|inr|\d)|$)/i);
+  const name = match?.[1]
+    ?.replace(/^(?:to\s+)?(?:create|save|set up|start)\s+/i, '')
+    ?.replace(/\s+(?:goal|please)$/i, '')
+    ?.trim();
+  return name && name.length <= 80 ? name : null;
+}
+
 function generateConfirmationText(data, lang = 'en-IN') {
   return generateLocalizedSpokenResponse({ action: 'create', parsedData: data, lang });
 }
@@ -646,5 +772,3 @@ function generateConfirmationText(data, lang = 'en-IN') {
 function generateFollowUpQuestion(data, lang = 'en-IN') {
   return generateLocalizedFollowUp(data, lang);
 }
-
-

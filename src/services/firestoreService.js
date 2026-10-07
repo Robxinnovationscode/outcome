@@ -33,6 +33,8 @@ export function getFirestoreMode() {
 const inMemoryStore = {
   users: {
     default_user: {
+      transactions: [],
+      goals: [],
       expenses: [
         {
           id: 'exp_seed_1',
@@ -94,6 +96,8 @@ const inMemoryStore = {
 function getOrCreateUserStore(userId) {
   if (!inMemoryStore.users[userId]) {
     inMemoryStore.users[userId] = {
+      transactions: [],
+      goals: [],
       expenses: [],
       income: [],
       investments: []
@@ -145,182 +149,244 @@ export function normalizeSubType(type, category, notes = '') {
  * - users/{userId}/investments
  */
 export async function executeFirestoreCRUD(operation, data, userId = 'default_user') {
-  const collectionName = getCollectionName(data.transaction_type);
+  const entityType = String(data.entityType || data.entity_type || data.recordType || '').toLowerCase();
+  const isGoal = entityType === 'goal' || entityType === 'goals';
+  const transactionType = String(data.transaction_type || data.type || '').toLowerCase();
+  const isInvestment = transactionType === 'investment' || entityType === 'investment' || entityType === 'investments';
+  const collectionName = isGoal ? 'goals' : (isInvestment ? 'investments' : 'transactions');
   const path = `users/${userId}/${collectionName}`;
+  const recordId = data.docId || data.recordId || data.record_id || data.documentId ||
+    data.transactionId || data.transaction_id || data.investmentId || data.investment_id ||
+    data.targetId || data.target_id || data.id || (isGoal ? data.goalId || data.goal_id : null);
+  const now = new Date();
+  const amount = data.amount === undefined || data.amount === null ? undefined : Number(data.amount);
+  if (!['create', 'read', 'update', 'delete'].includes(operation)) {
+    return { success: false, error: `Unsupported CRUD operation: ${operation}` };
+  }
+  if (!isGoal && !isInvestment && operation !== 'read' && !['expense', 'income', 'investment'].includes(transactionType)) {
+    return { success: false, error: 'transaction_type must be expense, income, or investment.' };
+  }
+  if (operation !== 'read' && !userId) {
+    return { success: false, error: 'A user ID is required for this operation.' };
+  }
+  if ((operation === 'update' || operation === 'delete') && !recordId) {
+    return { success: false, error: `${operation} requires an exact record ID; refusing to guess a record.` };
+  }
+  if (operation === 'create' && (isGoal
+    ? !(data.name || data.goalName || data.goal_name || data.customName)
+    : (!Number.isFinite(amount) || amount <= 0 || !transactionType))) {
+    return { success: false, error: 'Create requires a goal name or a positive amount and transaction type.' };
+  }
 
-  const standardizedSubType = normalizeSubType(data.transaction_type, data.category, data.notes);
-  const payload = {
-    amount: typeof data.amount === 'number' ? data.amount : parseFloat(data.amount) || 0,
-    category: standardizedSubType,
-    subType: standardizedSubType,
-    currency: data.currency || 'INR',
-    date: data.date || new Date().toISOString().split('T')[0],
-    notes: data.notes || '',
-    source: 'voice_agent', // REQUIRED audit tag per Section 5.2
-    confidence: data.confidence || 0.95,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  };
+  const subtype = normalizeSubType(transactionType, data.category, data.notes);
+  const rawPayload = isGoal
+    ? {
+        name: data.name || data.goalName || data.goal_name || data.customName,
+        goalName: data.goalName || data.goal_name || data.customName || data.name,
+        customName: data.customName || data.name || data.goalName || data.goal_name,
+        description: data.description || '',
+        presentCost: data.presentCost === undefined ? amount : Number(data.presentCost),
+        years: data.years === undefined ? undefined : Number(data.years),
+        inflation: data.inflation === undefined ? undefined : Number(data.inflation),
+        returnRate: data.returnRate === undefined ? undefined : Number(data.returnRate),
+        currentSip: data.currentSip === undefined ? undefined : Number(data.currentSip),
+        investmentType: data.investmentType || 'SIP/MF',
+        entityType: 'goal',
+        updatedAt: now.toISOString()
+      }
+    : isInvestment
+      ? {
+          name: data.name || data.notes || data.companyName || data.company_name || data.investmentType || data.category || 'Investment',
+          amount,
+          currentAmount: data.currentAmount === undefined ? amount : Number(data.currentAmount),
+          investmentType: data.investmentType || data.investment_type || data.assetType || data.category || 'Other',
+          goalId: data.goalId || data.goal_id || null,
+          goalName: data.goalName || data.goal_name || null,
+          companyName: data.companyName || data.company_name || data.company || null,
+          symbol: data.symbol || data.stockSymbol || null,
+          category: data.category || data.investmentType || 'Investment',
+          date: data.date || now.toISOString().slice(0, 10),
+          notes: data.notes || '',
+          interestRate: data.interestRate === undefined ? undefined : Number(data.interestRate),
+          maturityDate: data.maturityDate,
+          startDate: data.startDate,
+          duration: data.duration === undefined ? undefined : Number(data.duration),
+          monthlyDeposit: data.monthlyDeposit === undefined ? undefined : Number(data.monthlyDeposit),
+          units: data.units === undefined ? undefined : Number(data.units),
+          schemeCode: data.schemeCode,
+          description: data.description,
+          source: 'voice_agent',
+          confidence: Number.isFinite(Number(data.confidence)) ? Number(data.confidence) : 0.95,
+          updatedAt: now.toISOString()
+        }
+      : {
+          name: data.name || (data.notes ? data.notes.slice(0, 30) : data.category || 'Transaction'),
+          amount,
+          type: transactionType === 'income' ? 'Income' : 'Expense',
+          subType: subtype,
+          category: data.category || 'General',
+          method: data.method || 'Voice Agent',
+          currency: data.currency || 'INR',
+          date: data.date || now.toISOString().slice(0, 10),
+          notes: data.notes || '',
+          source: 'voice_agent',
+          confidence: Number.isFinite(Number(data.confidence)) ? Number(data.confidence) : 0.95,
+          updatedAt: now.toISOString()
+        };
+  const payload = Object.fromEntries(Object.entries(rawPayload).filter(([, value]) => value !== undefined));
 
   if (!isFirebaseConfigured()) {
     const userStore = getOrCreateUserStore(userId);
-    const storeCollection = userStore[collectionName] || [];
+    const storeCollection = userStore[collectionName] || (userStore[collectionName] = []);
 
     if (operation === 'create') {
-      const docId = `mem_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-      const newRecord = { id: docId, ...payload, transaction_type: data.transaction_type || 'expense' };
+      if (data.requestId) {
+        const prior = storeCollection.find(record => record.requestId === data.requestId);
+        if (prior) return { success: true, mode: 'in_memory_sandbox', operation, docId: prior.id, duplicate_prevented: true, data: prior };
+      }
+      const docId = `mem_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const newRecord = {
+        id: docId,
+        ...payload,
+        requestId: data.requestId || undefined,
+        transaction_type: transactionType || (isGoal ? 'goal' : undefined),
+        createdAt: now.toISOString()
+      };
       storeCollection.unshift(newRecord);
       userStore[collectionName] = storeCollection;
+      let ledgerRecord = newRecord;
+      if (isInvestment) {
+        ledgerRecord = {
+          id: `mem_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          name: newRecord.name || newRecord.notes || newRecord.investmentType,
+          amount: newRecord.amount,
+          type: 'Investment',
+          subType: newRecord.investmentType,
+          category: newRecord.category,
+          date: newRecord.date,
+          notes: newRecord.notes,
+          source: 'voice_agent',
+          investmentDocId: docId,
+          requestId: data.requestId || undefined,
+          transaction_type: 'investment',
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString()
+        };
+        userStore.transactions.unshift(ledgerRecord);
+      } else if (!isGoal && collectionName !== 'transactions') {
+        ledgerRecord = { ...newRecord, transaction_type: transactionType };
+        userStore.transactions.unshift(ledgerRecord);
+      } else if (!isGoal) {
+        ledgerRecord = { ...newRecord, transaction_type: transactionType };
+      }
       broadcastCrudEvent({ type: 'create', userId, collectionName, docId, record: newRecord });
       return {
         success: true,
         mode: 'in_memory_sandbox',
         operation: 'create',
         docId: docId,
+        mainTxId: isGoal ? null : ledgerRecord.id,
         path: `${path}/${docId}`,
         data: newRecord
       };
     }
 
     if (operation === 'read') {
+      const records = isGoal
+        ? storeCollection
+        : isInvestment
+          ? storeCollection
+          : userStore.transactions;
       return {
         success: true,
         mode: 'in_memory_sandbox',
         operation: 'read',
-        count: storeCollection.length,
-        records: storeCollection
+        count: records.length,
+        records
       };
     }
 
+    const targetIndex = storeCollection.findIndex(record => record.id === recordId);
+    if (targetIndex < 0) {
+      return { success: false, mode: 'in_memory_sandbox', operation, error: `Record ${recordId} was not found in ${collectionName}.` };
+    }
+    const existing = storeCollection[targetIndex];
     if (operation === 'update') {
-      let targetIndex = -1;
-      if (data.docId) {
-        targetIndex = storeCollection.findIndex(r => r.id === data.docId);
-      } else if (data.category) {
-        targetIndex = storeCollection.findIndex(r => r.category.toLowerCase() === data.category.toLowerCase());
-      } else {
-        targetIndex = 0; // Most recent
+      const changes = {};
+      if (amount !== undefined) changes[isGoal ? 'presentCost' : 'amount'] = amount;
+      for (const field of ['name', 'category', 'subType', 'date', 'notes', 'method', 'currentAmount', 'investmentType', 'goalId', 'goalName', 'companyName', 'symbol', 'description', 'presentCost', 'years', 'inflation', 'returnRate', 'currentSip']) {
+        if (data[field] !== undefined) changes[field] = data[field];
       }
-
-      if (targetIndex === -1 || !storeCollection[targetIndex]) {
-        return {
-          success: false,
-          error: `No matching ${data.category || collectionName} transaction found to update.`
-        };
+      if (isGoal && !changes.name) {
+        changes.name = data.goalName || data.goal_name || data.customName;
       }
-
-      const existing = storeCollection[targetIndex];
-      const updated = {
-        ...existing,
-        amount: data.amount !== undefined && !isNaN(data.amount) ? data.amount : existing.amount,
-        category: data.category || existing.category,
-        notes: data.notes || existing.notes,
-        updatedAt: new Date().toISOString()
-      };
-      storeCollection[targetIndex] = updated;
-      broadcastCrudEvent({ type: 'update', userId, collectionName, docId: existing.id });
-
-      return {
-        success: true,
-        mode: 'in_memory_sandbox',
-        operation: 'update',
-        docId: existing.id,
-        updatedFields: updated
-      };
+      if (isGoal && changes.name) changes.goalName = changes.name;
+      Object.assign(existing, changes, { updatedAt: now.toISOString() });
+      if (isInvestment) {
+        userStore.transactions.forEach(tx => {
+          if (tx.investmentDocId === recordId) Object.assign(tx, { amount: changes.amount ?? tx.amount, name: changes.name ?? tx.name, notes: changes.notes ?? tx.notes, updatedAt: now.toISOString() });
+        });
+      }
+      broadcastCrudEvent({ type: 'update', userId, collectionName, docId: recordId });
+      return { success: true, mode: 'in_memory_sandbox', operation, docId: recordId, updatedFields: existing };
     }
 
-    if (operation === 'delete') {
-      let targetIndex = -1;
-      if (data.docId) {
-        targetIndex = storeCollection.findIndex(r => r.id === data.docId);
-      } else if (data.category) {
-        targetIndex = storeCollection.findIndex(r => r.category.toLowerCase() === data.category.toLowerCase());
-      } else {
-        targetIndex = 0; // Most recent
-      }
-
-      if (targetIndex === -1 || !storeCollection[targetIndex]) {
-        return {
-          success: false,
-          error: `No recent transaction found in ${collectionName} to delete.`
-        };
-      }
-
-      const deletedItem = storeCollection.splice(targetIndex, 1)[0];
-      broadcastCrudEvent({ type: 'delete', userId, collectionName, docId: deletedItem.id });
+    if (isGoal && userStore.investments.some(investment => investment.goalId === recordId)) {
       return {
-        success: true,
+        success: false,
         mode: 'in_memory_sandbox',
-        operation: 'delete',
-        docId: deletedItem.id,
-        deletedData: deletedItem
+        operation,
+        error: 'This goal has linked investments. Reassign or remove them before deleting the goal.'
       };
     }
+    storeCollection.splice(targetIndex, 1);
+    if (isInvestment) {
+      userStore.transactions = userStore.transactions.filter(tx => tx.investmentDocId !== recordId);
+    }
+    broadcastCrudEvent({ type: 'delete', userId, collectionName, docId: recordId });
+    return { success: true, mode: 'in_memory_sandbox', operation, docId: recordId, deletedData: existing };
   }
 
   const db = getFirestore();
 
   try {
     if (operation === 'create') {
+      if (data.requestId) {
+        const existing = await db.collection(path).where('requestId', '==', data.requestId).limit(1).get();
+        if (!existing.empty) {
+          const prior = existing.docs[0];
+          return { success: true, mode: 'live_firestore', operation, docId: prior.id, duplicate_prevented: true, data: prior.data() };
+        }
+      }
+
       const docRef = await db.collection(path).add({
         ...payload,
-        createdAt: new Date(),
-        updatedAt: new Date()
+        requestId: data.requestId || undefined,
+        transaction_type: transactionType || (isGoal ? 'goal' : undefined),
+        createdAt: now,
+        updatedAt: now
       });
-
-      // Synchronize with mobile app primary collection: users/{userId}/transactions
-      const mainTxPath = `users/${userId}/transactions`;
       let mainTxId = null;
-      try {
-        const txType = data.transaction_type === 'income' ? 'Income' : (data.transaction_type === 'investment' ? 'Investment' : 'Expense');
-        
-        // Check for recent duplicate (same amount, type, and date within last 8 seconds) to prevent double entry
-        const recentDocs = await db.collection(mainTxPath)
-          .where('date', '==', payload.date)
-          .where('amount', '==', payload.amount)
-          .get();
-
-        let isDuplicate = false;
-        const nowMs = Date.now();
-        recentDocs.forEach(d => {
-          const itemData = d.data();
-          const createdMs = itemData.createdAt?.toDate ? itemData.createdAt.toDate().getTime() : (itemData.createdAt ? new Date(itemData.createdAt).getTime() : 0);
-          if (nowMs - createdMs < 8000 && itemData.type === txType) {
-            isDuplicate = true;
-            mainTxId = d.id;
-          }
-        });
-
-        if (isDuplicate) {
-          console.log(`⚠️ Prevented duplicate transaction creation for ${payload.date} ₹${payload.amount}`);
-          return {
-            success: true,
-            mode: 'live_firestore',
-            operation: 'create',
-            docId: docRef.id,
-            mainTxId: mainTxId,
-            data: payload,
-            duplicate_prevented: true
-          };
-        }
-
-        const mainTxRef = await db.collection(mainTxPath).add({
-          name: data.notes ? (data.notes.length > 30 ? data.notes.slice(0, 30) + '...' : data.notes) : payload.category,
+      if (isInvestment) {
+        const ledgerRef = await db.collection(`users/${userId}/transactions`).add({
+          name: payload.name || payload.notes || payload.investmentType,
           amount: payload.amount,
-          type: txType,
-          subType: payload.subType || payload.category,
+          type: 'Investment',
+          subType: payload.investmentType,
           category: payload.category,
           date: payload.date,
           notes: payload.notes || '',
           source: 'voice_agent',
           confidence: payload.confidence,
-          subCollectionDocId: docRef.id,
-          createdAt: new Date(),
-          updatedAt: new Date()
+          investmentDocId: docRef.id,
+          requestId: data.requestId || undefined,
+          createdAt: now,
+          updatedAt: now
         });
-        mainTxId = mainTxRef.id;
-      } catch (mainErr) {
-        console.warn('⚠️ Could not dual-write to users/{userId}/transactions:', mainErr.message);
+        mainTxId = ledgerRef.id;
+        await db.collection(path).doc(docRef.id).update({ ledgerTransactionId: mainTxId });
+      } else if (!isGoal) {
+        mainTxId = docRef.id;
       }
 
       broadcastCrudEvent({ type: 'create', userId, collectionName, docId: docRef.id, mainTxId });
@@ -336,13 +402,11 @@ export async function executeFirestoreCRUD(operation, data, userId = 'default_us
     }
 
     if (operation === 'read') {
-      const snapshot = await db.collection(path)
-        .orderBy('date', 'desc')
-        .limit(25)
-        .get();
+      const snapshot = await db.collection(path).get();
 
       const records = [];
       snapshot.forEach(doc => records.push({ id: doc.id, ...doc.data() }));
+      records.sort((a, b) => new Date(b.createdAt || b.date || 0) - new Date(a.createdAt || a.date || 0));
 
       return {
         success: true,
@@ -354,171 +418,83 @@ export async function executeFirestoreCRUD(operation, data, userId = 'default_us
     }
 
     if (operation === 'update') {
-      const updateData = {
-        amount: payload.amount,
-        category: payload.category,
-        notes: payload.notes,
-        updatedAt: new Date()
-      };
-
-      if (data.docId) {
-        try {
-          const docRef = db.collection(path).doc(data.docId);
-          await docRef.update(updateData);
-        } catch (e) {
-          // ignore if only in transactions
+      const allowedFields = isGoal
+        ? ['name', 'customName', 'description', 'presentCost', 'years', 'inflation', 'returnRate', 'currentSip', 'investmentType', 'goalAge', 'childCurrentAge', 'currentAge', 'goalName']
+        : isInvestment
+          ? ['name', 'amount', 'currentAmount', 'category', 'investmentType', 'goalId', 'goalName', 'companyName', 'symbol', 'date', 'notes', 'interestRate', 'maturityDate', 'description', 'units', 'schemeCode']
+          : ['name', 'amount', 'category', 'subType', 'date', 'notes', 'method'];
+      const changes = {};
+      for (const field of allowedFields) {
+        if (isGoal && field === 'presentCost') {
+          if (data.presentCost !== undefined || amount !== undefined) changes.presentCost = Number(data.presentCost ?? amount);
+        } else if (isGoal && field === 'goalName') {
+          if (data.goalName || data.goal_name) changes.name = data.goalName || data.goal_name;
+        } else if (field === 'amount') {
+          if (amount !== undefined) changes.amount = amount;
+        } else if (data[field] !== undefined) {
+          changes[field] = data[field];
         }
+      }
+      if (isGoal && changes.name) changes.goalName = changes.name;
+      if (Object.keys(changes).length === 0) {
+        return { success: false, mode: 'live_firestore', operation, error: 'No editable fields were provided.' };
+      }
+      changes.updatedAt = now;
 
-        // Also update in users/{userId}/transactions
-        try {
-          const mainSnap = await db.collection(`users/${userId}/transactions`)
-            .where('subCollectionDocId', '==', data.docId)
-            .get();
-          if (!mainSnap.empty) {
-            for (const d of mainSnap.docs) {
-              await d.ref.update({
-                name: payload.category || 'Transaction',
-                amount: payload.amount,
-                category: payload.category,
-                notes: payload.notes,
-                updatedAt: new Date()
-              });
-            }
-          } else {
-            const mainTxRef = db.collection(`users/${userId}/transactions`).doc(data.docId);
-            await mainTxRef.update({
-              name: payload.category || 'Transaction',
-              amount: payload.amount,
-              category: payload.category,
-              notes: payload.notes,
-              updatedAt: new Date()
-            });
-          }
-        } catch (_) {}
+      const recordRef = db.collection(path).doc(recordId);
+      const recordSnapshot = await recordRef.get();
+      if (!recordSnapshot.exists) {
+        return { success: false, mode: 'live_firestore', operation, error: `Record ${recordId} was not found in ${collectionName}.` };
+      }
+      const existing = recordSnapshot.data();
+      await recordRef.update(changes);
 
-        broadcastCrudEvent({ type: 'update', userId, collectionName, docId: data.docId });
-        return {
-          success: true,
-          mode: 'live_firestore',
-          operation: 'update',
-          docId: data.docId,
-          updatedFields: payload
-        };
+      if (isInvestment) {
+        const ledger = await db.collection(`users/${userId}/transactions`)
+          .where('investmentDocId', '==', recordId).get();
+        for (const ledgerDoc of ledger.docs) {
+          const ledgerChanges = { updatedAt: now };
+          if (changes.amount !== undefined) ledgerChanges.amount = changes.amount;
+          if (changes.name !== undefined) ledgerChanges.name = changes.name;
+          if (changes.category !== undefined) ledgerChanges.category = changes.category;
+          if (changes.notes !== undefined) ledgerChanges.notes = changes.notes;
+          await ledgerDoc.ref.update(ledgerChanges);
+        }
       }
 
-      // Find latest matching document to update
-      const snapshot = await db.collection(path)
-        .where('category', '==', data.category)
-        .orderBy('createdAt', 'desc')
-        .limit(1)
-        .get();
-
-      if (snapshot.empty) {
-        return {
-          success: false,
-          error: `No recent ${data.category} transaction found to update.`
-        };
-      }
-
-      const docToUpdate = snapshot.docs[0];
-      await docToUpdate.ref.update({
-        amount: data.amount,
-        notes: data.notes || docToUpdate.data().notes,
-        updatedAt: new Date()
-      });
-
-      broadcastCrudEvent({ type: 'update', userId, collectionName, docId: docToUpdate.id });
-      return {
-        success: true,
-        mode: 'live_firestore',
-        operation: 'update',
-        docId: docToUpdate.id,
-        updatedFields: { amount: data.amount }
-      };
+      broadcastCrudEvent({ type: 'update', userId, collectionName, docId: recordId });
+      return { success: true, mode: 'live_firestore', operation, docId: recordId, updatedFields: { ...existing, ...changes } };
     }
 
     if (operation === 'delete') {
-      if (data.docId) {
-        let deletedData = {};
-        try {
-          const docRef = db.collection(path).doc(data.docId);
-          const docSnap = await docRef.get();
-          if (docSnap.exists) deletedData = docSnap.data();
-          await docRef.delete();
-        } catch (_) {}
+      const recordRef = db.collection(path).doc(recordId);
+      const recordSnapshot = await recordRef.get();
+      if (!recordSnapshot.exists) {
+        return { success: false, mode: 'live_firestore', operation, error: `Record ${recordId} was not found in ${collectionName}.` };
+      }
+      const deletedData = recordSnapshot.data();
 
-        // Also delete from users/{userId}/transactions
-        try {
-          await db.collection(`users/${userId}/transactions`).doc(data.docId).delete();
-        } catch (_) {}
-        try {
-          const mainSnap = await db.collection(`users/${userId}/transactions`)
-            .where('subCollectionDocId', '==', data.docId)
-            .get();
-          mainSnap.forEach(d => d.ref.delete());
-        } catch (_) {}
-
-        broadcastCrudEvent({ type: 'delete', userId, collectionName, docId: data.docId });
-        return {
-          success: true,
-          mode: 'live_firestore',
-          operation: 'delete',
-          docId: data.docId,
-          deletedData
-        };
+      if (isGoal) {
+        const linkedInvestments = await db.collection(`users/${userId}/investments`)
+          .where('goalId', '==', recordId).get();
+        if (!linkedInvestments.empty) {
+          return { success: false, mode: 'live_firestore', operation, error: 'This goal has linked investments. Reassign or remove them before deleting the goal.' };
+        }
       }
 
-      // Delete most recent entry in collection
-      const snapshot = await db.collection(path)
-        .orderBy('createdAt', 'desc')
-        .limit(1)
-        .get();
-
-      if (snapshot.empty) {
-        return {
-          success: false,
-          error: `No recent transaction found in ${collectionName} to delete.`
-        };
+      if (isInvestment) {
+        const ledger = await db.collection(`users/${userId}/transactions`)
+          .where('investmentDocId', '==', recordId).get();
+        for (const ledgerDoc of ledger.docs) await ledgerDoc.ref.delete();
       }
+      await recordRef.delete();
 
-      const docToDelete = snapshot.docs[0];
-      const deletedData = docToDelete.data();
-      await docToDelete.ref.delete();
-
-      broadcastCrudEvent({ type: 'delete', userId, collectionName, docId: docToDelete.id });
-      return {
-        success: true,
-        mode: 'live_firestore',
-        operation: 'delete',
-        docId: docToDelete.id,
-        deletedData
-      };
+      broadcastCrudEvent({ type: 'delete', userId, collectionName, docId: recordId });
+      return { success: true, mode: 'live_firestore', operation, docId: recordId, deletedData };
     }
   } catch (error) {
-    console.warn(`⚠️ Live Firestore ${operation} failed (${error.message}). Falling back to in-memory store.`);
-    // Fallback to in-memory store so the user voice flow never crashes
-    const userStore = getOrCreateUserStore(userId);
-    const storeCollection = userStore[collectionName] || [];
-
-    if (operation === 'create') {
-      const docId = `mem_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-      const newRecord = { id: docId, ...payload };
-      storeCollection.unshift(newRecord);
-      userStore[collectionName] = storeCollection;
-      return {
-        success: true,
-        mode: 'in_memory_fallback',
-        operation: 'create',
-        docId: docId,
-        path: `${path}/${docId}`,
-        data: newRecord
-      };
-    }
-
-    return {
-      success: false,
-      error: error.message
-    };
+    console.error(`Live Firestore ${operation} failed in ${path}:`, error);
+    return { success: false, mode: 'live_firestore', operation, error: error.message || 'Firestore operation failed.' };
   }
 }
 
@@ -531,8 +507,12 @@ export async function fetchAllTransactions(userId = 'default_user') {
 
   if (!isFirebaseConfigured()) {
     const userStore = getOrCreateUserStore(userId);
+    allRecords.push(...(userStore.transactions || []));
     for (const col of collections) {
-      const records = (userStore[col] || []).map(r => ({
+      const records = (userStore[col] || [])
+        .filter(record => col !== 'investments' ||
+          !(userStore.transactions || []).some(transaction => transaction.investmentDocId === record.id))
+        .map(r => ({
         ...r,
         transaction_type: col === 'investments' ? 'investment' : (col === 'income' ? 'income' : 'expense')
       }));
@@ -552,6 +532,7 @@ export async function fetchAllTransactions(userId = 'default_user') {
         const data = doc.data();
         seenIds.add(doc.id);
         if (data.subCollectionDocId) seenIds.add(data.subCollectionDocId);
+        if (data.investmentDocId) seenIds.add(data.investmentDocId);
         const rawType = (data.type || '').toLowerCase();
         const txType = rawType === 'income' ? 'income' : (rawType === 'investment' ? 'investment' : 'expense');
         allRecords.push({
@@ -568,13 +549,13 @@ export async function fetchAllTransactions(userId = 'default_user') {
         });
       });
     } catch (mErr) {
-      console.warn('⚠️ Could not query users/{userId}/transactions:', mErr.message);
+      throw mErr;
     }
 
     // 2. Also read from subcollections for backward compatibility
     for (const col of collections) {
       const path = `users/${userId}/${col}`;
-      const snap = await db.collection(path).orderBy('date', 'desc').limit(25).get();
+      const snap = await db.collection(path).get();
       snap.forEach(doc => {
         if (!seenIds.has(doc.id)) {
           seenIds.add(doc.id);
@@ -592,23 +573,16 @@ export async function fetchAllTransactions(userId = 'default_user') {
     allRecords.sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
     return allRecords;
   } catch (e) {
-    console.warn('⚠️ Live Firestore read failed, returning in-memory cached records:', e.message);
-    const userStore = getOrCreateUserStore(userId);
-    for (const col of collections) {
-      const records = (userStore[col] || []).map(r => ({
-        ...r,
-        transaction_type: col === 'investments' ? 'investment' : (col === 'income' ? 'income' : 'expense')
-      }));
-      allRecords.push(...records);
-    }
-    allRecords.sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
-    return allRecords;
+    console.error(`Live Firestore read failed for user ${userId}:`, e);
+    throw e;
   }
 }
 
 export function getCollectionName(type) {
-  if (type === 'income') return 'income';
-  if (type === 'investment') return 'investments';
-  return 'expenses';
+  const normalized = String(type || '').toLowerCase();
+  if (normalized === 'income') return 'transactions';
+  if (normalized === 'investment') return 'investments';
+  if (normalized === 'expense') return 'transactions';
+  if (normalized === 'goal' || normalized === 'goals') return 'goals';
+  throw new Error(`Unsupported record type: ${type}`);
 }
-

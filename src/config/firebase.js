@@ -10,7 +10,13 @@ let db = null;
 let isInitialized = false;
 
 export const initializeFirebase = () => {
-  if (isInitialized && db) return db;
+  if (isInitialized) return db;
+  if (process.env.FIRESTORE_MODE === 'memory') {
+    isInitialized = true;
+    db = null;
+    console.log('Firestore running in explicit in-memory test mode.');
+    return db;
+  }
   if (admin.apps && admin.apps.length > 0) {
     db = admin.firestore();
     isInitialized = true;
@@ -69,4 +75,3 @@ export const isFirebaseConfigured = () => {
   }
   return isInitialized && db !== null;
 };
-
