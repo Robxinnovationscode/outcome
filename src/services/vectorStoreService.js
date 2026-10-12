@@ -95,3 +95,26 @@ export async function fetchAllForUser(userId = 'default_user') {
   }
   return out;
 }
+
+export async function removeEmbeddingBySourceId(sourceId) {
+  if (!sourceId) return;
+  // 1. In-memory embeddings removal
+  for (let i = inMemoryEmbeddings.length - 1; i >= 0; i--) {
+    if (inMemoryEmbeddings[i].sourceId === sourceId || inMemoryEmbeddings[i].id === sourceId) {
+      inMemoryEmbeddings.splice(i, 1);
+    }
+  }
+
+  // 2. Firestore embeddings removal
+  if (isFirebaseConfigured()) {
+    try {
+      const db = getFirestore();
+      const snapshot = await db.collection(COLLECTION).where('sourceId', '==', sourceId).get();
+      snapshot.forEach(d => {
+        try { d.ref.delete(); } catch (_) {}
+      });
+    } catch (e) {
+      console.warn('⚠️ Firestore vector remove fallback:', e.message);
+    }
+  }
+}

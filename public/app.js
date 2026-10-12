@@ -1225,15 +1225,14 @@ document.addEventListener('DOMContentLoaded', () => {
         method: 'DELETE'
       });
       const data = await res.json();
-      if (data.success) {
-        // SSE will trigger loadTransactions() automatically
-        // But also update local state immediately for instant UI feedback
+      if (res.ok && data.success) {
         allTransactions = allTransactions.filter(t => t.id !== id);
         renderLedger(allTransactions);
         updateStats(allTransactions);
         appendDialogMessage('agent', `✅ Deleted ${type} transaction from your records.`, 'delete');
+        await loadTransactions();
       } else {
-        appendDialogMessage('agent', `⚠️ Delete failed: ${data.error || 'Unknown error'}`, 'delete');
+        appendDialogMessage('agent', `⚠️ Delete failed: ${data.error || 'Transaction not found'}`, 'delete');
       }
     } catch (e) {
       appendDialogMessage('agent', `❌ Delete error: ${e.message}`, 'delete');
@@ -1242,17 +1241,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Modal Handlers
   const modalCategoryOptions = {
-    expense: ['Essential', 'Mandatory', 'Discretionary'],
-    income: ['Active', 'Passive'],
-    investment: ['Mutual Fund', 'Stocks', 'Fixed Deposit', 'Recurring Deposit', 'Savings', 'Gold', 'Other']
+    expense: ['Essential', 'Mandatory', 'Discretionary', 'Groceries', 'Food Dining', 'Transportation', 'Utilities', 'Medical Care', 'Shopping', 'Travel'],
+    income: ['Active', 'Passive', 'Salary', 'Freelancing', 'Dividends', 'Rental Income', 'Business Profit', 'Interest'],
+    investment: ['Mutual Fund', 'Stocks', 'Fixed Deposit', 'Recurring Deposit', 'Savings', 'Gold', 'Crypto', 'Other']
   };
 
   function refreshCategoryOptions(type, currentVal = '') {
-    const list = modalCategoryOptions[type] || modalCategoryOptions.expense;
+    const list = [...(modalCategoryOptions[type] || modalCategoryOptions.expense)];
+    if (currentVal && !list.some(c => c.toLowerCase() === currentVal.toLowerCase())) {
+      list.unshift(currentVal);
+    }
     modalCategory.innerHTML = list
       .map(cat => `<option value="${cat}" ${cat.toLowerCase() === (currentVal || '').toLowerCase() ? 'selected' : ''}>${cat}</option>`)
       .join('');
-    if (!currentVal && list.length > 0) {
+    if (currentVal) {
+      modalCategory.value = currentVal;
+    } else if (list.length > 0) {
       modalCategory.value = list[0];
     }
   }
@@ -1300,21 +1304,32 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     try {
+      let res, data;
       if (docId) {
-        await fetch(`/api/voice/transactions/${type}/${docId}`, {
+        res = await fetch(`/api/voice/transactions/${type}/${docId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        appendDialogMessage('agent', `Updated ${type} (${payload.category}) to ₹${payload.amount}.`, 'update');
       } else {
-        await fetch(`/api/voice/transactions`, {
+        res = await fetch(`/api/voice/transactions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
+      }
+
+      data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to save transaction');
+      }
+
+      if (docId) {
+        appendDialogMessage('agent', `Updated ${type} (${payload.category}) to ₹${payload.amount}.`, 'update');
+      } else {
         appendDialogMessage('agent', `Created new ${type} for ${payload.category} of ₹${payload.amount}.`, 'create');
       }
+
       modal.classList.add('hidden');
       await loadTransactions();
     } catch (err) {

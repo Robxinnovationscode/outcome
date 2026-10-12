@@ -3,8 +3,8 @@ import { parseUtterance } from '../services/nluEngine.js';
 import { sessionManager } from '../services/sessionManager.js';
 import { executeFirestoreCRUD, fetchAllTransactions, registerSseClient, getFirestoreMode } from '../services/firestoreService.js';
 import { createParticipantToken, getLiveKitUrl } from '../services/livekitTokenService.js';
-import { CATEGORY_TAXONOMY, CATEGORY_SUBITEMS, DEFAULT_CONFIDENCE_THRESHOLD } from '../config/constants.js';
-import { ingestTextForRag, queryRag, summarizeFullHistory, callLLM } from '../services/ragService.js';
+import { CATEGORY_TAXONOMY, CATEGORY_SUBITEMS, CATEGORY_SYNONYMS, DEFAULT_CONFIDENCE_THRESHOLD } from '../config/constants.js';
+import { ingestTextForRag, queryRag, summarizeFullHistory, callLLM, removeEmbeddingBySourceId } from '../services/ragService.js';
 import { detectLanguage, generateLocalizedSpokenResponse, generateLocalizedFollowUp } from '../services/languageService.js';
 
 /**
@@ -247,6 +247,30 @@ export async function querySpending(req, res) {
     const totalIncome = transactions.filter(t => t.transaction_type === 'income').reduce((sum, t) => sum + (t.amount || 0), 0);
     const totalInvestments = transactions.filter(t => t.transaction_type === 'investment').reduce((sum, t) => sum + (t.amount || 0), 0);
 
+    const qLower = queryText.toLowerCase();
+    let matchedCategory = null;
+    for (const [type, catMap] of Object.entries(CATEGORY_SYNONYMS)) {
+      for (const [catName, synonyms] of Object.entries(catMap)) {
+        if (qLower.includes(catName.toLowerCase()) || synonyms.some(s => qLower.includes(s.toLowerCase()))) {
+          matchedCategory = catName;
+          break;
+        }
+      }
+      if (matchedCategory) break;
+    }
+
+    let answer = `Found ${transactions.length} total records. Total Expenses: ₹${totalExpenses.toLocaleString('en-IN')}, Income: ₹${totalIncome.toLocaleString('en-IN')}, Investments: ₹${totalInvestments.toLocaleString('en-IN')}.`;
+    if (matchedCategory) {
+      const cLow = matchedCategory.toLowerCase();
+      const filtered = transactions.filter(t =>
+        (t.category || '').toLowerCase() === cLow ||
+        (t.subType || '').toLowerCase() === cLow ||
+        (t.notes || '').toLowerCase().includes(cLow)
+      );
+      const catTotal = filtered.reduce((sum, t) => sum + (t.amount || 0), 0);
+      answer = `You have spent ₹${catTotal.toLocaleString('en-IN')} across ${filtered.length} transactions for ${matchedCategory}. Total overall expenses: ₹${totalExpenses.toLocaleString('en-IN')}.`;
+    }
+
     // RAG analysis
     let ragResult = null;
     try {
@@ -257,7 +281,7 @@ export async function querySpending(req, res) {
 
     return res.status(200).json({
       query: queryText,
-      answer: `Found ${transactions.length} total records. Total Expenses: ₹${totalExpenses.toLocaleString('en-IN')}, Income: ₹${totalIncome.toLocaleString('en-IN')}, Investments: ₹${totalInvestments.toLocaleString('en-IN')}.`,
+      answer,
       summary: ragResult?.summary || null,
       records: transactions
     });
@@ -289,7 +313,25 @@ export async function listAllTransactions(req, res) {
 export async function createTransactionDirect(req, res) {
   try {
     const userId = req.body.userId || req.user?.uid || 'default_user';
+    const amount = parseFloat(req.body.amount);
+    if (isNaN(amount) || amount <= 0) {
+      return res.status(400).json({ success: false, error: 'A valid positive amount is required.' });
+    }
+
     const result = await executeFirestoreCRUD('create', req.body, userId);
+    if (!result.success) {
+      return res.status(400).json({ success: false, error: result.error || 'Failed to create transaction' });
+    }
+
+    // Ingest into RAG vector store for instant retrieval
+    try {
+      await ingestTextForRag({
+        userId,
+        sourceId: result.docId,
+        text: `${req.body.transaction_type || 'expense'} of ₹${amount} for ${req.body.category || 'General'} on ${req.body.date || new Date().toISOString().split('T')[0]}. Notes: ${req.body.notes || ''}`
+      });
+    } catch (_) {}
+
     return res.status(200).json({ success: true, result });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -304,6 +346,22 @@ export async function updateTransactionDirect(req, res) {
     const { type, id } = req.params;
     const userId = req.body.userId || req.user?.uid || 'default_user';
     const result = await executeFirestoreCRUD('update', { transaction_type: type, docId: id, ...req.body }, userId);
+    if (!result.success) {
+      return res.status(404).json({ success: false, error: result.error || 'Transaction not found or update failed' });
+    }
+
+    // Sync RAG embedding
+    try {
+      await removeEmbeddingBySourceId(id);
+      if (req.body.amount) {
+        await ingestTextForRag({
+          userId,
+          sourceId: id,
+          text: `${req.body.transaction_type || type} of ₹${req.body.amount} for ${req.body.category || 'General'} on ${req.body.date || new Date().toISOString().split('T')[0]}. Notes: ${req.body.notes || ''}`
+        });
+      }
+    } catch (_) {}
+
     return res.status(200).json({ success: true, result });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -318,6 +376,15 @@ export async function deleteTransactionDirect(req, res) {
     const { type, id } = req.params;
     const userId = req.query.userId || req.body?.userId || req.user?.uid || 'default_user';
     const result = await executeFirestoreCRUD('delete', { transaction_type: type, docId: id }, userId);
+    if (!result.success) {
+      return res.status(404).json({ success: false, error: result.error || 'Transaction not found or delete failed' });
+    }
+
+    // Remove from RAG
+    try {
+      await removeEmbeddingBySourceId(id);
+    } catch (_) {}
+
     return res.status(200).json({ success: true, result });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -436,22 +503,51 @@ export async function conversationalAgent(req, res) {
       action_performed = 'delete';
       parsedData = await parseUtterance(text, {});
       dbResult = await executeFirestoreCRUD('delete', parsedData, userId);
-      spokenResponse = generateLocalizedSpokenResponse({
-        action: 'delete',
-        parsedData,
-        lang: detectedLang
-      });
+      if (dbResult && dbResult.success) {
+        if (dbResult.docId) {
+          try { await removeEmbeddingBySourceId(dbResult.docId); } catch (_) {}
+        }
+        spokenResponse = generateLocalizedSpokenResponse({
+          action: 'delete',
+          parsedData: dbResult.deletedData || parsedData,
+          lang: detectedLang
+        });
+      } else {
+        spokenResponse = dbResult?.error || (
+          detectedLang === 'ta-IN' ? "நீக்க வேண்டிய பரிவர்த்தனை எதுவும் கிடைக்கவில்லை." :
+          (detectedLang === 'hi-IN' ? "हटाने के लिए कोई लेनदेन नहीं मिला।" : "No transaction found to delete.")
+        );
+      }
     }
     // 2. Intent: UPDATE
     else if (isUpdate) {
       action_performed = 'update';
       parsedData = await parseUtterance(text, {});
       dbResult = await executeFirestoreCRUD('update', parsedData, userId);
-      spokenResponse = generateLocalizedSpokenResponse({
-        action: 'update',
-        parsedData,
-        lang: detectedLang
-      });
+      if (dbResult && dbResult.success) {
+        const docId = dbResult.docId;
+        if (docId) {
+          try {
+            await removeEmbeddingBySourceId(docId);
+            const updated = dbResult.updatedFields || parsedData;
+            await ingestTextForRag({
+              userId,
+              sourceId: docId,
+              text: `${updated.transaction_type || 'expense'} of ₹${updated.amount} for ${updated.category || 'General'} on ${updated.date || new Date().toISOString().split('T')[0]}. Notes: ${updated.notes || ''}`
+            });
+          } catch (_) {}
+        }
+        spokenResponse = generateLocalizedSpokenResponse({
+          action: 'update',
+          parsedData: dbResult.updatedFields || parsedData,
+          lang: detectedLang
+        });
+      } else {
+        spokenResponse = dbResult?.error || (
+          detectedLang === 'ta-IN' ? "மாற்ற வேண்டிய பரிவர்த்தனை எதுவும் கிடைக்கவில்லை." :
+          (detectedLang === 'hi-IN' ? "अपडेट करने के लिए कोई लेनदेन नहीं मिला।" : "No transaction found to update.")
+        );
+      }
     }
     // 3. Intent: QUERY / RAG SUMMARY
     else if (isSummary || (isQuery && !/\b(spent|paid|bought|received|credited|invested|kuduthen|vanginen|diya|mila)\b/i.test(lower))) {
@@ -461,21 +557,50 @@ export async function conversationalAgent(req, res) {
       const totalInc = allTx.filter(t => t.transaction_type === 'income').reduce((acc, t) => acc + (t.amount || 0), 0);
       const totalInv = allTx.filter(t => t.transaction_type === 'investment').reduce((acc, t) => acc + (t.amount || 0), 0);
 
+      // Check if query is targeting a specific category
+      let matchedCategory = null;
+      for (const [type, catMap] of Object.entries(CATEGORY_SYNONYMS)) {
+        for (const [catName, synonyms] of Object.entries(catMap)) {
+          if (lower.includes(catName.toLowerCase()) || synonyms.some(s => lower.includes(s.toLowerCase()))) {
+            matchedCategory = catName;
+            break;
+          }
+        }
+        if (matchedCategory) break;
+      }
+
+      if (matchedCategory) {
+        const cLow = matchedCategory.toLowerCase();
+        const catFiltered = allTx.filter(t =>
+          (t.category || '').toLowerCase() === cLow ||
+          (t.subType || '').toLowerCase() === cLow ||
+          (t.notes || '').toLowerCase().includes(cLow)
+        );
+        const catTotal = catFiltered.reduce((acc, t) => acc + (t.amount || 0), 0);
+        if (detectedLang === 'ta-IN') {
+          spokenResponse = `${matchedCategory}-ல் நீங்கள் மொத்தம் ₹${catTotal.toLocaleString('en-IN')} (${catFiltered.length} பரிவர்த்தனைகள்) செலவு செய்துள்ளீர்கள்.`;
+        } else if (detectedLang === 'hi-IN') {
+          spokenResponse = `${matchedCategory} पर आपने कुल ₹${catTotal.toLocaleString('en-IN')} (${catFiltered.length} लेनदेन) खर्च किए हैं।`;
+        } else {
+          spokenResponse = `You have spent ₹${catTotal.toLocaleString('en-IN')} across ${catFiltered.length} transactions on ${matchedCategory}. Total overall expenses: ₹${totalExp.toLocaleString('en-IN')}.`;
+        }
+      } else {
+        spokenResponse = generateLocalizedSpokenResponse({
+          action: 'query',
+          parsedData: {},
+          lang: detectedLang,
+          totalExp,
+          totalInc,
+          totalInv,
+          allCount: allTx.length
+        });
+      }
+
       try {
         ragResult = await queryRag({ userId, query: text, k: 4 });
       } catch (e) {
         // ignore
       }
-
-      spokenResponse = generateLocalizedSpokenResponse({
-        action: 'query',
-        parsedData: {},
-        lang: detectedLang,
-        totalExp,
-        totalInc,
-        totalInv,
-        allCount: allTx.length
-      });
     }
     // 4. Intent: CREATE (Default financial transaction parsing & logging)
     else {
@@ -519,6 +644,7 @@ export async function conversationalAgent(req, res) {
       try {
         await ingestTextForRag({
           userId,
+          sourceId: dbResult?.docId || null,
           text: `${parsedData.transaction_type} of ₹${parsedData.amount} for ${parsedData.category} on ${parsedData.date}. Notes: ${parsedData.notes}`
         });
       } catch (e) {

@@ -1,8 +1,10 @@
 import dotenv from 'dotenv';
 import { getEmbedding } from './embeddingService.js';
-import { ingestEmbedding, queryTopK, fetchAllForUser } from './vectorStoreService.js';
+import { ingestEmbedding, queryTopK, fetchAllForUser, removeEmbeddingBySourceId } from './vectorStoreService.js';
 
 dotenv.config();
+
+export { removeEmbeddingBySourceId };
 
 export async function ingestTextForRag({ userId = 'default_user', sourceId = null, text = '' }) {
   const embedding = await getEmbedding(text);
