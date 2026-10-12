@@ -42,6 +42,11 @@ function fromFirestoreValue(valObj) {
   return null;
 }
 
+async function firestoreError(res, operation) {
+  const details = await res.text();
+  return new Error(`Firestore ${operation} failed (${res.status}): ${details || res.statusText}`);
+}
+
 export class RestDocRef {
   constructor(path, id, config) {
     this.path = path;
@@ -52,9 +57,10 @@ export class RestDocRef {
   async get() {
     const url = `https://firestore.googleapis.com/v1/projects/${this.config.projectId}/databases/(default)/documents/${this.path}/${this.id}?key=${this.config.apiKey}`;
     const res = await fetch(url);
-    if (!res.ok) {
+    if (res.status === 404) {
       return { exists: false, id: this.id, data: () => null };
     }
+    if (!res.ok) throw await firestoreError(res, 'read');
     const json = await res.json();
     const data = {};
     for (const [k, v] of Object.entries(json.fields || {})) {
@@ -77,12 +83,14 @@ export class RestDocRef {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fields })
     });
+    if (!res.ok) throw await firestoreError(res, 'update');
     return res.json();
   }
 
   async delete() {
     const url = `https://firestore.googleapis.com/v1/projects/${this.config.projectId}/databases/(default)/documents/${this.path}/${this.id}?key=${this.config.apiKey}`;
     const res = await fetch(url, { method: 'DELETE' });
+    if (!res.ok && res.status !== 404) throw await firestoreError(res, 'delete');
     return res.json();
   }
 }
@@ -143,9 +151,7 @@ export class RestQuery {
       }
 
       const res = await fetch(`${parentUrl}?${params.toString()}`);
-      if (!res.ok) {
-        return { docs: [], empty: true, size: 0, forEach: () => {} };
-      }
+      if (!res.ok) throw await firestoreError(res, 'list');
       const json = await res.json();
       const docs = (json.documents || []).map(doc => {
         const id = doc.name.split('/').pop();
@@ -217,6 +223,7 @@ export class RestQuery {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ structuredQuery })
     });
+    if (!res.ok) throw await firestoreError(res, 'query');
 
     const results = await res.json();
     const docs = [];
@@ -277,7 +284,9 @@ export class RestCollectionRef extends RestQuery {
       body: JSON.stringify({ fields })
     });
     const json = await res.json();
+    if (!res.ok) throw new Error(`Firestore create failed (${res.status}): ${JSON.stringify(json)}`);
     const id = json.name ? json.name.split('/').pop() : null;
+    if (!id) throw new Error('Firestore create response did not include a document ID.');
     return {
       id,
       path: `${this.path}/${id}`

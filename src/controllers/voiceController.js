@@ -3,8 +3,8 @@ import { parseUtterance } from '../services/nluEngine.js';
 import { sessionManager } from '../services/sessionManager.js';
 import { executeFirestoreCRUD, fetchAllTransactions, registerSseClient, getFirestoreMode } from '../services/firestoreService.js';
 import { createParticipantToken, getLiveKitUrl } from '../services/livekitTokenService.js';
-import { CATEGORY_TAXONOMY, CATEGORY_SUBITEMS, CATEGORY_SYNONYMS, DEFAULT_CONFIDENCE_THRESHOLD } from '../config/constants.js';
-import { ingestTextForRag, queryRag, summarizeFullHistory, callLLM, removeEmbeddingBySourceId } from '../services/ragService.js';
+import { CATEGORY_TAXONOMY, CATEGORY_SUBITEMS, DEFAULT_CONFIDENCE_THRESHOLD } from '../config/constants.js';
+import { ingestTextForRag, queryRag, summarizeFullHistory, callLLM } from '../services/ragService.js';
 import { detectLanguage, generateLocalizedSpokenResponse, generateLocalizedFollowUp } from '../services/languageService.js';
 
 /**
@@ -23,7 +23,7 @@ export function ledgerEventsStream(req, res) {
 export async function processAudio(req, res) {
   try {
     const file = req.file;
-    const { audioBase64, userId = 'default_user', model = 'B', autoCommit = true, customTaxonomy, language } = req.body;
+    const { audioBase64, userId = 'default_user', model = 'A', autoCommit = false, customTaxonomy, language } = req.body;
 
     if (!file && !audioBase64) {
       return res.status(400).json({
@@ -73,8 +73,11 @@ export async function processAudio(req, res) {
         lang: detectedLang
       });
 
-      if (model.toUpperCase() === 'B' || autoCommit) {
+      if (String(model).toUpperCase() === 'B' || autoCommit === true || String(autoCommit).toLowerCase() === 'true') {
         dbResult = await executeFirestoreCRUD('create', parsedData, userId);
+        if (!dbResult.success) {
+          return res.status(400).json({ success: false, error: dbResult.error, db_execution: dbResult });
+        }
         // Ingest into RAG
         try {
           await ingestTextForRag({
@@ -162,8 +165,11 @@ export async function processText(req, res) {
     const confirmationText = generateConfirmationText(parsedData);
 
     let dbResult = null;
-    if (model.toUpperCase() === 'B' || autoCommit) {
+    if (String(model).toUpperCase() === 'B' || autoCommit === true || String(autoCommit).toLowerCase() === 'true') {
       dbResult = await executeFirestoreCRUD('create', parsedData, userId);
+      if (!dbResult.success) {
+        return res.status(400).json({ success: false, error: dbResult.error, db_execution: dbResult });
+      }
       try {
         await ingestTextForRag({
           userId,
@@ -215,16 +221,35 @@ export async function parseOnly(req, res) {
  */
 export async function confirmCommit(req, res) {
   try {
-    const { parsedData, userId = 'default_user', operation = 'create' } = req.body;
-    if (!parsedData || !parsedData.transaction_type || !parsedData.amount) {
-      return res.status(400).json({ error: 'Valid parsedData object with transaction_type and amount is required.' });
+    const { parsedData, userId = req.user?.uid || 'default_user', operation = 'create' } = req.body;
+    if (!parsedData || typeof parsedData !== 'object' || Array.isArray(parsedData)) {
+      return res.status(400).json({ success: false, committed: false, error: 'parsedData must be a record object.' });
+    }
+    if (!['create', 'update', 'delete'].includes(operation)) {
+      return res.status(400).json({ success: false, committed: false, error: 'operation must be create, update, or delete.' });
     }
 
+    const isGoal = ['goal', 'goals'].includes(String(parsedData.entityType || parsedData.entity_type || '').toLowerCase());
+    if (operation === 'create' && !isGoal &&
+      (!parsedData.transaction_type || !Number.isFinite(Number(parsedData.amount)) || Number(parsedData.amount) <= 0)) {
+      return res.status(400).json({ success: false, committed: false, error: 'Create requires transaction_type and a positive amount.' });
+    }
     const result = await executeFirestoreCRUD(operation, parsedData, userId);
+    if (!result.success) {
+      const status = /not found/i.test(result.error || '') ? 404 : 400;
+      return res.status(status).json({
+        success: false,
+        committed: false,
+        operation,
+        error: result.error || 'The requested operation was not completed.',
+        db_execution: result
+      });
+    }
     return res.status(200).json({
+      success: true,
       committed: true,
       operation,
-      confirmation_message: `Successfully ${operation}d ${parsedData.transaction_type} of ₹${parsedData.amount} for ${parsedData.category}.`,
+      confirmation_message: `Successfully ${operation}d ${isGoal ? parsedData.name || parsedData.goalName : `${parsedData.transaction_type} of ₹${parsedData.amount}`}.`,
       db_execution: result
     });
   } catch (error) {
@@ -247,30 +272,6 @@ export async function querySpending(req, res) {
     const totalIncome = transactions.filter(t => t.transaction_type === 'income').reduce((sum, t) => sum + (t.amount || 0), 0);
     const totalInvestments = transactions.filter(t => t.transaction_type === 'investment').reduce((sum, t) => sum + (t.amount || 0), 0);
 
-    const qLower = queryText.toLowerCase();
-    let matchedCategory = null;
-    for (const [type, catMap] of Object.entries(CATEGORY_SYNONYMS)) {
-      for (const [catName, synonyms] of Object.entries(catMap)) {
-        if (qLower.includes(catName.toLowerCase()) || synonyms.some(s => qLower.includes(s.toLowerCase()))) {
-          matchedCategory = catName;
-          break;
-        }
-      }
-      if (matchedCategory) break;
-    }
-
-    let answer = `Found ${transactions.length} total records. Total Expenses: ₹${totalExpenses.toLocaleString('en-IN')}, Income: ₹${totalIncome.toLocaleString('en-IN')}, Investments: ₹${totalInvestments.toLocaleString('en-IN')}.`;
-    if (matchedCategory) {
-      const cLow = matchedCategory.toLowerCase();
-      const filtered = transactions.filter(t =>
-        (t.category || '').toLowerCase() === cLow ||
-        (t.subType || '').toLowerCase() === cLow ||
-        (t.notes || '').toLowerCase().includes(cLow)
-      );
-      const catTotal = filtered.reduce((sum, t) => sum + (t.amount || 0), 0);
-      answer = `You have spent ₹${catTotal.toLocaleString('en-IN')} across ${filtered.length} transactions for ${matchedCategory}. Total overall expenses: ₹${totalExpenses.toLocaleString('en-IN')}.`;
-    }
-
     // RAG analysis
     let ragResult = null;
     try {
@@ -281,7 +282,7 @@ export async function querySpending(req, res) {
 
     return res.status(200).json({
       query: queryText,
-      answer,
+      answer: `Found ${transactions.length} total records. Total Expenses: ₹${totalExpenses.toLocaleString('en-IN')}, Income: ₹${totalIncome.toLocaleString('en-IN')}, Investments: ₹${totalInvestments.toLocaleString('en-IN')}.`,
       summary: ragResult?.summary || null,
       records: transactions
     });
@@ -312,27 +313,10 @@ export async function listAllTransactions(req, res) {
  */
 export async function createTransactionDirect(req, res) {
   try {
-    const userId = req.body.userId || req.user?.uid || 'default_user';
-    const amount = parseFloat(req.body.amount);
-    if (isNaN(amount) || amount <= 0) {
-      return res.status(400).json({ success: false, error: 'A valid positive amount is required.' });
-    }
-
+    const userId = req.user?.uid || req.body.userId || 'default_user';
     const result = await executeFirestoreCRUD('create', req.body, userId);
-    if (!result.success) {
-      return res.status(400).json({ success: false, error: result.error || 'Failed to create transaction' });
-    }
-
-    // Ingest into RAG vector store for instant retrieval
-    try {
-      await ingestTextForRag({
-        userId,
-        sourceId: result.docId,
-        text: `${req.body.transaction_type || 'expense'} of ₹${amount} for ${req.body.category || 'General'} on ${req.body.date || new Date().toISOString().split('T')[0]}. Notes: ${req.body.notes || ''}`
-      });
-    } catch (_) {}
-
-    return res.status(200).json({ success: true, result });
+    if (!result.success) return res.status(400).json({ success: false, error: result.error, result });
+    return res.status(201).json({ success: true, result });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -344,24 +328,9 @@ export async function createTransactionDirect(req, res) {
 export async function updateTransactionDirect(req, res) {
   try {
     const { type, id } = req.params;
-    const userId = req.body.userId || req.user?.uid || 'default_user';
-    const result = await executeFirestoreCRUD('update', { transaction_type: type, docId: id, ...req.body }, userId);
-    if (!result.success) {
-      return res.status(404).json({ success: false, error: result.error || 'Transaction not found or update failed' });
-    }
-
-    // Sync RAG embedding
-    try {
-      await removeEmbeddingBySourceId(id);
-      if (req.body.amount) {
-        await ingestTextForRag({
-          userId,
-          sourceId: id,
-          text: `${req.body.transaction_type || type} of ₹${req.body.amount} for ${req.body.category || 'General'} on ${req.body.date || new Date().toISOString().split('T')[0]}. Notes: ${req.body.notes || ''}`
-        });
-      }
-    } catch (_) {}
-
+    const userId = req.user?.uid || req.body.userId || 'default_user';
+    const result = await executeFirestoreCRUD('update', { ...req.body, transaction_type: type, docId: id }, userId);
+    if (!result.success) return res.status(/not found/i.test(result.error || '') ? 404 : 400).json({ success: false, error: result.error, result });
     return res.status(200).json({ success: true, result });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -374,17 +343,9 @@ export async function updateTransactionDirect(req, res) {
 export async function deleteTransactionDirect(req, res) {
   try {
     const { type, id } = req.params;
-    const userId = req.query.userId || req.body?.userId || req.user?.uid || 'default_user';
+    const userId = req.user?.uid || req.query.userId || req.body?.userId || 'default_user';
     const result = await executeFirestoreCRUD('delete', { transaction_type: type, docId: id }, userId);
-    if (!result.success) {
-      return res.status(404).json({ success: false, error: result.error || 'Transaction not found or delete failed' });
-    }
-
-    // Remove from RAG
-    try {
-      await removeEmbeddingBySourceId(id);
-    } catch (_) {}
-
+    if (!result.success) return res.status(/not found/i.test(result.error || '') ? 404 : 400).json({ success: false, error: result.error, result });
     return res.status(200).json({ success: true, result });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -477,7 +438,7 @@ export async function ragFullSummary(req, res) {
  */
 export async function conversationalAgent(req, res) {
   try {
-    const { text, userId = 'default_user', sessionId } = req.body;
+    const { text, userId = req.user?.uid || 'default_user', sessionId, model = 'A', autoCommit = false } = req.body;
     if (!text || text.trim() === '') {
       return res.status(400).json({ success: false, error: 'text is required' });
     }
@@ -489,8 +450,11 @@ export async function conversationalAgent(req, res) {
     // Detect User Intent: DELETE, UPDATE, QUERY/READ, RAG_SUMMARY, or CREATE
     const isDelete = /\b(delete|remove|cancel|discard|erase|hatao|mitado|azhi|azhithuvidu|vendaam)\b/i.test(lower);
     const isUpdate = /\b(update|change|modify|correct|badlo|set|maathu|maathividu)\b/i.test(lower);
+    const isGoalRequest = /\b(goal|savings target|financial goal)\b/i.test(lower);
     const isQuery = /\b(what|how much|total|show|list|summary|spending|expenses|tell me|kitna|dekhao|kya|evvalavu|evlo|sollinga|kaatu)\b/i.test(lower);
     const isSummary = /\b(summary|overview|health|report|analysis|advice|motham|mothatham)\b/i.test(lower);
+    const shouldCommit = autoCommit === true || String(autoCommit).toLowerCase() === 'true' || String(model).toUpperCase() === 'B';
+    const requestedId = text.match(/\b(?:record|transaction|investment|goal)?\s*id\s*[:#]?\s*([A-Za-z0-9_-]{5,})\b/i)?.[1];
 
     let action_performed = 'create';
     let spokenResponse = '';
@@ -502,52 +466,49 @@ export async function conversationalAgent(req, res) {
     if (isDelete) {
       action_performed = 'delete';
       parsedData = await parseUtterance(text, {});
-      dbResult = await executeFirestoreCRUD('delete', parsedData, userId);
-      if (dbResult && dbResult.success) {
-        if (dbResult.docId) {
-          try { await removeEmbeddingBySourceId(dbResult.docId); } catch (_) {}
-        }
-        spokenResponse = generateLocalizedSpokenResponse({
-          action: 'delete',
-          parsedData: dbResult.deletedData || parsedData,
-          lang: detectedLang
+      parsedData.entityType = isGoalRequest ? 'goal' : (parsedData.transaction_type === 'investment' ? 'investment' : 'transaction');
+      if (requestedId) parsedData.recordId = requestedId;
+      if (!parsedData.recordId) {
+        return res.status(200).json({
+          success: true,
+          action_performed,
+          requires_clarification: true,
+          detected_language: detectedLang,
+          missing_fields: ['recordId'],
+          spokenResponse: 'Please identify the exact record to delete. I will not guess which record you mean.',
+          parsedData
         });
-      } else {
-        spokenResponse = dbResult?.error || (
-          detectedLang === 'ta-IN' ? "நீக்க வேண்டிய பரிவர்த்தனை எதுவும் கிடைக்கவில்லை." :
-          (detectedLang === 'hi-IN' ? "हटाने के लिए कोई लेनदेन नहीं मिला।" : "No transaction found to delete.")
-        );
       }
+      if (shouldCommit) dbResult = await executeFirestoreCRUD('delete', parsedData, userId);
+      spokenResponse = generateLocalizedSpokenResponse({
+        action: 'delete',
+        parsedData,
+        lang: detectedLang
+      });
     }
     // 2. Intent: UPDATE
     else if (isUpdate) {
       action_performed = 'update';
       parsedData = await parseUtterance(text, {});
-      dbResult = await executeFirestoreCRUD('update', parsedData, userId);
-      if (dbResult && dbResult.success) {
-        const docId = dbResult.docId;
-        if (docId) {
-          try {
-            await removeEmbeddingBySourceId(docId);
-            const updated = dbResult.updatedFields || parsedData;
-            await ingestTextForRag({
-              userId,
-              sourceId: docId,
-              text: `${updated.transaction_type || 'expense'} of ₹${updated.amount} for ${updated.category || 'General'} on ${updated.date || new Date().toISOString().split('T')[0]}. Notes: ${updated.notes || ''}`
-            });
-          } catch (_) {}
-        }
-        spokenResponse = generateLocalizedSpokenResponse({
-          action: 'update',
-          parsedData: dbResult.updatedFields || parsedData,
-          lang: detectedLang
+      parsedData.entityType = isGoalRequest ? 'goal' : (parsedData.transaction_type === 'investment' ? 'investment' : 'transaction');
+      if (requestedId) parsedData.recordId = requestedId;
+      if (!parsedData.recordId) {
+        return res.status(200).json({
+          success: true,
+          action_performed,
+          requires_clarification: true,
+          detected_language: detectedLang,
+          missing_fields: ['recordId'],
+          spokenResponse: 'Please identify the exact record to update. I will not guess which record you mean.',
+          parsedData
         });
-      } else {
-        spokenResponse = dbResult?.error || (
-          detectedLang === 'ta-IN' ? "மாற்ற வேண்டிய பரிவர்த்தனை எதுவும் கிடைக்கவில்லை." :
-          (detectedLang === 'hi-IN' ? "अपडेट करने के लिए कोई लेनदेन नहीं मिला।" : "No transaction found to update.")
-        );
       }
+      if (shouldCommit) dbResult = await executeFirestoreCRUD('update', parsedData, userId);
+      spokenResponse = generateLocalizedSpokenResponse({
+        action: 'update',
+        parsedData,
+        lang: detectedLang
+      });
     }
     // 3. Intent: QUERY / RAG SUMMARY
     else if (isSummary || (isQuery && !/\b(spent|paid|bought|received|credited|invested|kuduthen|vanginen|diya|mila)\b/i.test(lower))) {
@@ -557,58 +518,64 @@ export async function conversationalAgent(req, res) {
       const totalInc = allTx.filter(t => t.transaction_type === 'income').reduce((acc, t) => acc + (t.amount || 0), 0);
       const totalInv = allTx.filter(t => t.transaction_type === 'investment').reduce((acc, t) => acc + (t.amount || 0), 0);
 
-      // Check if query is targeting a specific category
-      let matchedCategory = null;
-      for (const [type, catMap] of Object.entries(CATEGORY_SYNONYMS)) {
-        for (const [catName, synonyms] of Object.entries(catMap)) {
-          if (lower.includes(catName.toLowerCase()) || synonyms.some(s => lower.includes(s.toLowerCase()))) {
-            matchedCategory = catName;
-            break;
-          }
-        }
-        if (matchedCategory) break;
-      }
-
-      if (matchedCategory) {
-        const cLow = matchedCategory.toLowerCase();
-        const catFiltered = allTx.filter(t =>
-          (t.category || '').toLowerCase() === cLow ||
-          (t.subType || '').toLowerCase() === cLow ||
-          (t.notes || '').toLowerCase().includes(cLow)
-        );
-        const catTotal = catFiltered.reduce((acc, t) => acc + (t.amount || 0), 0);
-        if (detectedLang === 'ta-IN') {
-          spokenResponse = `${matchedCategory}-ல் நீங்கள் மொத்தம் ₹${catTotal.toLocaleString('en-IN')} (${catFiltered.length} பரிவர்த்தனைகள்) செலவு செய்துள்ளீர்கள்.`;
-        } else if (detectedLang === 'hi-IN') {
-          spokenResponse = `${matchedCategory} पर आपने कुल ₹${catTotal.toLocaleString('en-IN')} (${catFiltered.length} लेनदेन) खर्च किए हैं।`;
-        } else {
-          spokenResponse = `You have spent ₹${catTotal.toLocaleString('en-IN')} across ${catFiltered.length} transactions on ${matchedCategory}. Total overall expenses: ₹${totalExp.toLocaleString('en-IN')}.`;
-        }
-      } else {
-        spokenResponse = generateLocalizedSpokenResponse({
-          action: 'query',
-          parsedData: {},
-          lang: detectedLang,
-          totalExp,
-          totalInc,
-          totalInv,
-          allCount: allTx.length
-        });
-      }
-
       try {
         ragResult = await queryRag({ userId, query: text, k: 4 });
       } catch (e) {
         // ignore
       }
+
+      spokenResponse = generateLocalizedSpokenResponse({
+        action: 'query',
+        parsedData: {},
+        lang: detectedLang,
+        totalExp,
+        totalInc,
+        totalInv,
+        allCount: allTx.length
+      });
     }
     // 4. Intent: CREATE (Default financial transaction parsing & logging)
     else {
       action_performed = 'create';
       parsedData = await parseUtterance(text, {});
+      if (isGoalRequest) {
+        const goalName = extractGoalName(text);
+        if (!goalName) {
+          return res.status(200).json({
+            success: true,
+            action_performed: 'clarification_needed',
+            requires_clarification: true,
+            detected_language: detectedLang,
+            missing_fields: ['name'],
+            spokenResponse: 'What should I name this goal?',
+            parsedData: { entityType: 'goal' }
+          });
+        }
+        parsedData.entityType = 'goal';
+        parsedData.name = goalName;
+        parsedData.goalName = goalName;
+        if (parsedData.amount > 0) parsedData.presentCost = parsedData.amount;
+        parsedData.transaction_type = undefined;
+        parsedData.amount = undefined;
+      } else if (parsedData.transaction_type === 'investment') {
+        parsedData.entityType = 'investment';
+        if (!['other', 'general', ''].includes(String(parsedData.category || '').toLowerCase())) {
+          parsedData.investmentType = parsedData.investmentType || parsedData.category;
+        }
+        const goalsResult = await executeFirestoreCRUD('read', { entityType: 'goal' }, userId);
+        const matchedGoal = (goalsResult.records || []).find(goal =>
+          goal.name && lower.includes(String(goal.name).toLowerCase())
+        );
+        if (matchedGoal) {
+          parsedData.goalId = matchedGoal.id;
+          parsedData.goalName = matchedGoal.name;
+        }
+        const companyMatch = text.match(/\b(?:company|stock|shares?)\s+(?:of\s+)?([A-Z][A-Z0-9&.-]{1,12})\b/i);
+        if (companyMatch) parsedData.companyName = companyMatch[1];
+      }
 
       // Missing critical fields -> Ask clarification in detected language
-      if (parsedData.missing_fields && parsedData.missing_fields.length > 0) {
+      if (!isGoalRequest && parsedData.missing_fields && parsedData.missing_fields.length > 0) {
         const followUp = generateLocalizedFollowUp(parsedData, detectedLang);
         return res.status(200).json({
           success: true,
@@ -623,7 +590,7 @@ export async function conversationalAgent(req, res) {
       }
 
       // Guard: if NLU couldn't reliably parse key fields, ask for clarification
-      if (!parsedData.amount || parsedData.amount <= 0 || !parsedData.category || parsedData.category === 'Other') {
+      if (!isGoalRequest && (!parsedData.amount || parsedData.amount <= 0 || !parsedData.category || parsedData.category === 'Other')) {
         const followUp = generateLocalizedFollowUp(parsedData, detectedLang);
         return res.status(200).json({
           success: true,
@@ -637,24 +604,38 @@ export async function conversationalAgent(req, res) {
         });
       }
 
-      // Execute CRUD Create in Model B
-      dbResult = await executeFirestoreCRUD('create', parsedData, userId);
+      if (shouldCommit) dbResult = await executeFirestoreCRUD('create', {
+        ...parsedData,
+        requestId: req.body.requestId
+      }, userId);
 
-      // Ingest into RAG vector store
-      try {
-        await ingestTextForRag({
-          userId,
-          sourceId: dbResult?.docId || null,
-          text: `${parsedData.transaction_type} of ₹${parsedData.amount} for ${parsedData.category} on ${parsedData.date}. Notes: ${parsedData.notes}`
-        });
-      } catch (e) {
-        // ignore
+      if (dbResult?.success && !dbResult.duplicate_prevented) {
+        try {
+          await ingestTextForRag({
+            userId,
+            sourceId: dbResult.docId,
+            text: isGoalRequest
+              ? `Financial goal ${parsedData.name}. Target ₹${parsedData.presentCost || 0}.`
+              : `${parsedData.transaction_type} of ₹${parsedData.amount} for ${parsedData.category} on ${parsedData.date}. Notes: ${parsedData.notes}`
+          });
+        } catch (error) {
+          console.warn('Could not update Voice Agent RAG index after commit:', error.message);
+        }
       }
 
       spokenResponse = generateLocalizedSpokenResponse({
         action: 'create',
         parsedData,
         lang: detectedLang
+      });
+    }
+
+    if (dbResult && !dbResult.success) {
+      return res.status(400).json({
+        success: false,
+        action_performed,
+        error: dbResult.error || `Voice Agent ${action_performed} operation failed.`,
+        db_execution: dbResult
       });
     }
 
@@ -668,6 +649,10 @@ export async function conversationalAgent(req, res) {
       spokenResponse,
       confirmation_spoken: spokenResponse,
       parsedData,
+      requires_confirmation: !dbResult?.success && action_performed !== 'query',
+      auto_committed: Boolean(dbResult?.success),
+      operation: action_performed,
+      db_execution: dbResult,
       dbResult,
       ragResult,
       transactions: updatedTransactions
@@ -765,6 +750,21 @@ export async function getDiag(req, res) {
 }
 
 // Helpers
+function extractGoalName(text) {
+  const normalized = String(text || '').trim();
+  const knownGoal = normalized.match(/\b(education|marriage|dream home|wealth creation|retirement|emergency fund)\b/i);
+  if (knownGoal) {
+    return knownGoal[1].replace(/\b\w/g, letter => letter.toUpperCase());
+  }
+
+  const match = normalized.match(/\bgoal\s+(?:for\s+)?(.+?)(?=\s+(?:with|of|for|in|within)\s+(?:₹|rs\.?|inr|\d)|$)/i);
+  const name = match?.[1]
+    ?.replace(/^(?:to\s+)?(?:create|save|set up|start)\s+/i, '')
+    ?.replace(/\s+(?:goal|please)$/i, '')
+    ?.trim();
+  return name && name.length <= 80 ? name : null;
+}
+
 function generateConfirmationText(data, lang = 'en-IN') {
   return generateLocalizedSpokenResponse({ action: 'create', parsedData: data, lang });
 }
@@ -772,5 +772,3 @@ function generateConfirmationText(data, lang = 'en-IN') {
 function generateFollowUpQuestion(data, lang = 'en-IN') {
   return generateLocalizedFollowUp(data, lang);
 }
-
-
